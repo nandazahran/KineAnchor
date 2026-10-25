@@ -1,0 +1,12 @@
+[package]
+name = "kineanchor-core"
+description = "Platform-independent motion cue engine: providers in, dot field out. No I/O, no UI."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

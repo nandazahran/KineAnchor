@@ -1,0 +1,14 @@
+[package]
+name = "kineanchor-android-ffi"
+description = "JNI bridge exposing kineanchor-core to the Android Kotlin shell."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+kineanchor-core = { path = "../kineanchor-core" }

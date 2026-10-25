@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=KineAnchor
+GenericName=Motion Sickness Overlay
+Comment=Peripheral motion cues to prevent motion sickness on road and sea
+Exec=kineanchor
+Icon=io.github.nandazahran.kineanchor
+Terminal=false
+Type=Application
+Categories=Utility;Accessibility;
+StartupNotify=true
