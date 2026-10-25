@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use kineanchor::config_store::{load_config, load_pairing, save_pairing};
+use kineanchor::controller_provider::ControllerProvider;
+use kineanchor::iio_provider::IioProvider;
 use kineanchor::monotonic_secs;
 use kineanchor::net_provider::{AuthState, NetProvider};
 use kineanchor::provider::{Provider, ProviderEvent};
@@ -36,8 +38,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let engine = Arc::new(Mutex::new(Engine::new(config)));
     let running = Arc::new(AtomicBool::new(true));
 
-    // Spawn phone NetProvider + event router thread
+    // Spawn phone NetProvider + optional local IIO / Controller providers + event router thread
     let (tx, rx) = mpsc::channel::<ProviderEvent>();
+    let iio = IioProvider::new();
+    if iio.is_available() {
+        let iio_tx = tx.clone();
+        let iio_stop = running.clone();
+        let _ = std::thread::Builder::new()
+            .name("iio-provider".into())
+            .spawn(move || Box::new(iio).run(iio_tx, iio_stop));
+    }
+    let controller = ControllerProvider::new();
+    if controller.is_available() {
+        let ctl_tx = tx.clone();
+        let ctl_stop = running.clone();
+        let _ = std::thread::Builder::new()
+            .name("controller-provider".into())
+            .spawn(move || Box::new(controller).run(ctl_tx, ctl_stop));
+    }
     let net_provider = Box::new(NetProvider::new(auth.clone()));
     let net_stop = running.clone();
     std::thread::Builder::new()
