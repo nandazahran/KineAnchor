@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+        Id="*"
+        Name="KineAnchor"
+        UpgradeCode="94B2B8E1-6C74-4D3A-9C35-38E4F7D0A474"
+        Manufacturer="KineAnchor Contributors"
+        Language="1033"
+        Codepage="1252"
+        Version="0.1.0">
+
+        <Package
+            Id="*"
+            Keywords="Installer"
+            Description="FOSS Cross-Platform Motion Sickness Overlay (GPL-3.0-or-later)"
+            Manufacturer="KineAnchor Contributors"
+            InstallerVersion="450"
+            Languages="1033"
+            Compressed="yes"
+            InstallScope="perMachine"
+            SummaryCodepage="1252"/>
+
+        <MajorUpgrade
+            Schedule="afterInstallInitialize"
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed. Setup will now exit."/>
+
+        <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" DiskPrompt="CD-ROM #1"/>
+        <Property Id="DiskPrompt" Value="KineAnchor Installation"/>
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder" Name="PFiles">
+                <Directory Id="APPLICATIONFOLDER" Name="KineAnchor">
+                    <Component Id="MainExecutable" Guid="5B17C4E9-8F3B-447A-B102-83D126047474" Win64="yes">
+                        <File
+                            Id="kineanchor_exe"
+                            Name="kineanchor.exe"
+                            DiskId="1"
+                            Source="target\release\kineanchor.exe"
+                            KeyPath="yes"/>
+                    </Component>
+                </Directory>
+            </Directory>
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="ApplicationProgramsFolder" Name="KineAnchor">
+                    <Component Id="ApplicationShortcut" Guid="A93F2184-10B2-45E1-9F1C-724851047474">
+                        <Shortcut
+                            Id="ApplicationStartMenuShortcut"
+                            Name="KineAnchor"
+                            Description="Motion Sickness Peripheral Overlay"
+                            Target="[APPLICATIONFOLDER]kineanchor.exe"
+                            WorkingDirectory="APPLICATIONFOLDER"/>
+                        <RemoveFolder Id="CleanUpShortCut" Directory="ApplicationProgramsFolder" On="uninstall"/>
+                        <RegistryValue
+                            Root="HKCU"
+                            Key="Software\KineAnchor"
+                            Name="installed"
+                            Type="integer"
+                            Value="1"
+                            KeyPath="yes"/>
+                    </Component>
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <Feature
+            Id="Binaries"
+            Title="KineAnchor"
+            Description="Installs the KineAnchor desktop executable and Start Menu shortcut."
+            Level="1"
+            ConfigurableDirectory="APPLICATIONFOLDER"
+            AllowAdvertise="no"
+            Display="expand"
+            Absent="disallow">
+            <ComponentRef Id="MainExecutable"/>
+            <ComponentRef Id="ApplicationShortcut"/>
+        </Feature>
+    </Product>
+</Wix>

@@ -8,7 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 kineanchor-core = { path = "../kineanchor-core" }

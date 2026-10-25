@@ -1,0 +1,4 @@
+Initial release (0.1.0):
+- Click-through peripheral dot overlay via Rust kineanchor-core + JNI
+- 50 Hz USB tethering & LAN sensor puck streaming to Linux/Windows desktop
+- Car & Ship filter modes + orientation zeroing

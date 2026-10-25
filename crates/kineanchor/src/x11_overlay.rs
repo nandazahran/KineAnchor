@@ -71,6 +71,7 @@ pub fn spawn_x11_overlay(
                     .with_mouse_passthrough(true)
                     .with_always_on_top()
                     .with_decorations(false)
+                    .with_taskbar(false)
                     .with_maximized(true),
                 ..Default::default()
             };

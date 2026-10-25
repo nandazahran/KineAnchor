@@ -298,4 +298,76 @@ impl PhysicsEngine {
     pub fn current_offset(&self) -> (f32, f32, f32) {
         (self.state.pos[0], self.state.pos[1], self.state.roll)
     }
+
+    /// Estimates the dominant horizontal vehicle forward axis via 2D PCA over horizontal
+    /// acceleration samples (when yaw rate is low) and rotates `(right_axis, forward_axis)`
+    /// in the plane orthogonal to `up_axis`. Returns the applied yaw correction in radians.
+    pub fn align_forward_pca(&mut self, samples: &[MotionSample]) -> Option<f32> {
+        if samples.len() < 10 {
+            return None;
+        }
+        if !self.is_calibrated {
+            if let Some(g) = samples.iter().find_map(|s| s.gravity) {
+                let (r, f, u) = basis_from_gravity(g);
+                self.right_axis = r;
+                self.forward_axis = f;
+                self.up_axis = u;
+                self.is_calibrated = true;
+            }
+        }
+
+        let mut c_xx = 0.0_f32;
+        let mut c_xy = 0.0_f32;
+        let mut c_yy = 0.0_f32;
+        let mut count = 0usize;
+
+        for s in samples {
+            let w_yaw = dot3(
+                [
+                    s.gx - self.gyro_bias[0],
+                    s.gy - self.gyro_bias[1],
+                    s.gz - self.gyro_bias[2],
+                ],
+                self.up_axis,
+            );
+            // Only accumulate straight-line acceleration/braking samples (low yaw rate)
+            if w_yaw.abs() > 0.15 {
+                continue;
+            }
+            let a = [s.ax, s.ay, s.az];
+            let ax_h = dot3(a, self.right_axis);
+            let ay_h = dot3(a, self.forward_axis);
+            if ax_h * ax_h + ay_h * ay_h < 0.05 {
+                continue;
+            }
+            c_xx += ax_h * ax_h;
+            c_xy += ax_h * ay_h;
+            c_yy += ay_h * ay_h;
+            count += 1;
+        }
+
+        if count < 5 || (c_xx + c_yy) < 1e-3 {
+            return None;
+        }
+
+        // Principal eigenvector angle relative to current forward_axis (+y_h):
+        // tan(2 * yaw) = 2 * c_xy / (c_yy - c_xx)
+        let yaw = 0.5 * (2.0 * c_xy).atan2(c_yy - c_xx);
+        let (sin_y, cos_y) = yaw.sin_cos();
+
+        let r0 = self.right_axis;
+        let f0 = self.forward_axis;
+        let new_f = [
+            f0[0] * cos_y + r0[0] * sin_y,
+            f0[1] * cos_y + r0[1] * sin_y,
+            f0[2] * cos_y + r0[2] * sin_y,
+        ];
+        if let Some(f_unit) = norm3(new_f) {
+            self.forward_axis = f_unit;
+            if let Some(r_unit) = norm3(cross3(self.forward_axis, self.up_axis)) {
+                self.right_axis = r_unit;
+            }
+        }
+        Some(yaw)
+    }
 }

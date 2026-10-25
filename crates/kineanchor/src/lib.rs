@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 pub mod config_store;
+pub mod controller_provider;
+pub mod iio_provider;
 pub mod net_provider;
 pub mod provider;
 pub mod settings_ui;
 pub mod udev_hint;
+#[cfg(target_os = "linux")]
 pub mod wayland_overlay;
 pub mod x11_overlay;
 

@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+PackageIdentifier: io.github.nandazahran.KineAnchor
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: KineAnchor Contributors
+PublisherUrl: https://github.com/nandazahran/KineAnchor
+PackageName: KineAnchor
+PackageUrl: https://github.com/nandazahran/KineAnchor
+License: GPL-3.0-or-later
+ShortDescription: FOSS cross-platform motion sickness peripheral dot overlay.
+Description: >-
+  Peripheral drifting dots that move against vehicle motion so visual input
+  agrees with the vestibular system. Supports phone sensor streaming over USB
+  tethering or LAN, plus synthetic Car and Ship modes.
+Tags:
+  - accessibility
+  - motion-sickness
+  - overlay
+  - kinetosis
+Installers:
+  - Architecture: x64
+    InstallerType: wix
+    InstallerUrl: https://github.com/nandazahran/KineAnchor/releases/download/v0.1.0/kineanchor-0.1.0-x86_64.msi
+    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    ProductCode: '{5B17C4E9-8F3B-447A-B102-83D126047474}'
+ManifestType: singleton
+ManifestVersion: 1.6.0

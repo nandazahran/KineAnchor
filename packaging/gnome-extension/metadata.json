@@ -1,0 +1,7 @@
+{
+  "uuid": "kineanchor@nandazahran.github.io",
+  "name": "KineAnchor Motion Cues Overlay",
+  "description": "Click-through peripheral motion cues overlay for GNOME Wayland (companion to KineAnchor).",
+  "shell-version": ["45", "46", "47", "48"],
+  "url": "https://github.com/nandazahran/KineAnchor"
+}

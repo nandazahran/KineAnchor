@@ -4,7 +4,9 @@ use kineanchor::config_store::{load_config, load_pairing, save_pairing};
 use kineanchor::monotonic_secs;
 use kineanchor::net_provider::{AuthState, NetProvider};
 use kineanchor::provider::{Provider, ProviderEvent};
-use kineanchor::{settings_ui, wayland_overlay, x11_overlay};
+#[cfg(target_os = "linux")]
+use kineanchor::wayland_overlay;
+use kineanchor::{settings_ui, x11_overlay};
 use kineanchor_core::{Engine, Source};
 use std::sync::{
     Arc, Mutex,
@@ -76,22 +78,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     // Determine overlay backend
-    let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
-    let wayland_layer_shell = has_wayland && wayland_overlay::WaylandOverlayApp::is_supported();
+    #[cfg(target_os = "linux")]
+    let _overlay_handle = {
+        let has_wayland = std::env::var_os("WAYLAND_DISPLAY").is_some();
+        let wayland_layer_shell = has_wayland && wayland_overlay::WaylandOverlayApp::is_supported();
 
-    let _overlay_handle = if wayland_layer_shell {
-        println!("Using Wayland wlr-layer-shell overlay backend.");
-        match wayland_overlay::spawn_wayland_overlay(engine.clone(), running.clone()) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                eprintln!(
-                    "Failed to initialize Wayland overlay: {e}. Falling back to X11/generic overlay."
-                );
-                x11_overlay::spawn_x11_overlay(engine.clone(), running.clone()).ok()
+        if wayland_layer_shell {
+            println!("Using Wayland wlr-layer-shell overlay backend.");
+            match wayland_overlay::spawn_wayland_overlay(engine.clone(), running.clone()) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    eprintln!(
+                        "Failed to initialize Wayland overlay: {e}. Falling back to X11/generic overlay."
+                    );
+                    x11_overlay::spawn_x11_overlay(engine.clone(), running.clone()).ok()
+                }
             }
+        } else {
+            println!("Wayland layer-shell not detected. Using X11/fallback overlay backend.");
+            x11_overlay::spawn_x11_overlay(engine.clone(), running.clone()).ok()
         }
-    } else {
-        println!("Wayland layer-shell not detected. Using X11/fallback overlay backend.");
+    };
+
+    #[cfg(not(target_os = "linux"))]
+    let _overlay_handle = {
+        println!("Using desktop winit overlay backend.");
         x11_overlay::spawn_x11_overlay(engine.clone(), running.clone()).ok()
     };
 

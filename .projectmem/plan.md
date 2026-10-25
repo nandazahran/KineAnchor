@@ -18,9 +18,9 @@ Full plan: `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`.
 - [x] P0 scaffold: workspace (core, desktop bin, android-ffi), Cargo.lock tracked, SPDX, deny.toml, CI
 - [x] P1 Linux layer-shell overlay + synthetic mode (spike `wayapp` vs custom SCTK glue first)
 - [x] P2 phone stream over USB tether (NDJSON v1, QR pairing, watchdog fallback, fake_phone example)
-- [ ] P3 Windows overlay
-- [ ] P4 Android overlay + F-Droid
-- [ ] P5 polish (ship tuning, controller, mDNS, tray, GNOME extension)
+- [x] P3 Windows overlay (cross-platform cfg gating, winit click-through overlay, WiX MSI + winget manifests)
+- [x] P4 Android overlay + F-Droid (zero-dep C-ABI JNI bridge, OverlayService with alpha <= 0.8, Fastlane + F-Droid recipe)
+- [x] P5 polish (ship 0.1-0.3Hz wave band test, PCA forward-axis auto-detection, IioProvider, ControllerProvider, GNOME Shell extension)
 
 ## Next
 _Queued, but not started._

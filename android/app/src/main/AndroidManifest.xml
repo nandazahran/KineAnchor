@@ -35,5 +35,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Streams 50Hz vehicle IMU motion cues to a local PC over USB tethering to prevent motion sickness." />
         </service>
+
+        <service
+            android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Renders click-through peripheral motion cues over other apps to prevent motion sickness." />
+        </service>
     </application>
 </manifest>

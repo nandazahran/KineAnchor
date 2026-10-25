@@ -413,4 +413,106 @@ mod tests {
         assert_eq!(samples[0].t, replayed[0].t);
         assert_eq!(samples[1].gz, replayed[1].gz);
     }
+
+    #[test]
+    fn test_ship_mode_wave_band_energy_concentration() {
+        let ship_cfg = Config {
+            vehicle: Vehicle::Ship,
+            ..Default::default()
+        };
+
+        let mut wave_phys = physics::PhysicsEngine::new();
+        let mut vib_phys = physics::PhysicsEngine::new();
+
+        let dt = 0.02_f32; // 50 Hz
+        let mut wave_energy = 0.0_f32;
+        let mut vib_energy = 0.0_f32;
+
+        // Run 30 seconds at 50 Hz (1500 samples); measure steady-state energy over last 20s
+        for i in 0..1500 {
+            let t = i as f64 * dt as f64;
+            let wave_heave = 2.0 * (2.0 * core::f32::consts::PI * 0.2 * t as f32).sin();
+            let vib_heave = 2.0 * (2.0 * core::f32::consts::PI * 3.0 * t as f32).sin();
+
+            let (_, wy, _) = wave_phys.update(
+                &MotionSample {
+                    t,
+                    ax: 0.0,
+                    ay: 0.0,
+                    az: wave_heave,
+                    gx: 0.0,
+                    gy: 0.0,
+                    gz: 0.0,
+                    gravity: Some([0.0, 0.0, 9.81]),
+                },
+                dt,
+                &ship_cfg,
+            );
+            let (_, vy, _) = vib_phys.update(
+                &MotionSample {
+                    t,
+                    ax: 0.0,
+                    ay: 0.0,
+                    az: vib_heave,
+                    gx: 0.0,
+                    gy: 0.0,
+                    gz: 0.0,
+                    gravity: Some([0.0, 0.0, 9.81]),
+                },
+                dt,
+                &ship_cfg,
+            );
+
+            if i >= 500 {
+                wave_energy += wy * wy;
+                vib_energy += vy * vy;
+            }
+        }
+
+        let wave_rms = (wave_energy / 1000.0).sqrt();
+        let vib_rms = (vib_energy / 1000.0).sqrt();
+        assert!(
+            wave_rms > vib_rms * 8.0,
+            "Ship mode must pass 0.2Hz wave band (rms={wave_rms}) and attenuate 3Hz vibration (rms={vib_rms})"
+        );
+    }
+
+    #[test]
+    fn test_forward_axis_pca_auto_detection() {
+        let mut phys = physics::PhysicsEngine::new();
+        let yaw_true = 30.0_f32.to_radians();
+        let (sin_y, cos_y) = yaw_true.sin_cos();
+
+        let mut samples = Vec::new();
+        for i in 0..50 {
+            let t = i as f64 * 0.02;
+            let a_long = 2.5 * (t as f32 * 2.0).sin();
+            samples.push(MotionSample {
+                t,
+                ax: a_long * sin_y,
+                ay: a_long * cos_y,
+                az: 0.0,
+                gx: 0.0,
+                gy: 0.0,
+                gz: 0.0,
+                gravity: Some([0.0, 0.0, 9.81]),
+            });
+        }
+
+        let estimated_yaw = phys
+            .align_forward_pca(&samples)
+            .expect("PCA should converge");
+        assert!(
+            (estimated_yaw - yaw_true).abs() < 1e-3,
+            "Expected yaw {yaw_true}, got {estimated_yaw}"
+        );
+
+        // After PCA alignment, pure acceleration along rotated axis maps entirely to a_long (a_lat ≈ 0)
+        let (a_lat, a_long, _, _, _, _) = phys.project_sample(&samples[10]);
+        assert!(
+            a_lat.abs() < 1e-4,
+            "Expected zero lateral leak, got {a_lat}"
+        );
+        assert!(a_long.abs() > 0.5);
+    }
 }

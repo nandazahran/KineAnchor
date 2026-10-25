@@ -48,6 +48,8 @@ impl AuthState {
     pub fn new(port: u16) -> Self {
         let hostname = std::fs::read_to_string("/etc/hostname")
             .ok()
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .or_else(|| std::env::var("HOSTNAME").ok())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "kineanchor-desktop".to_string());
