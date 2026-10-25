@@ -197,7 +197,9 @@ Specified in [PROTOCOL.md](PROTOCOL.md): plain TCP, newline-delimited JSON, toke
 ## 5. Licensing
 
 - App: GPL-3.0-or-later. SPDX headers in every file.
-- Allowed dependency licenses (`cargo-deny` gate in CI): MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0, GPL-3.0(-or-later), LGPL-3.0. **Denied**: GPL-2.0-only, LGPL-2.1-only, AGPL, proprietary.
+- Allowed dependency licenses (`cargo-deny` gate in CI): MIT, Apache-2.0, BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, MPL-2.0, BSL-1.0, OFL-1.1, Ubuntu-font-1.0, GPL-3.0(-or-later), LGPL-3.0. **Denied**: GPL-2.0-only, LGPL-2.1-only, AGPL, proprietary.
+  - BSL-1.0 comes from `clipboard-win` + `error-code` (clipboard chain of `arboard`/`egui-winit` for the X11/Windows `eframe` UI).
+  - OFL-1.1 + Ubuntu-font-1.0 come from `epaint_default_fonts`: egui's bundled Ubuntu font, distributed as font artifacts, not linked code.
 - Android: ZXing core and CameraX (Apache-2.0) are compatible with GPLv3. No GMS/Firebase/ML Kit.
 - Prior art (cited in README; no code copied unless its license is verified compatible):
   - `dev.davidv.motionsickness` (DavidVentura/motion-sickness-app) — **GPL-3.0-only**. Copying code would force the combined work to GPL-3.0-only, so reference only.
