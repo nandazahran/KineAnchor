@@ -1,0 +1,16 @@
+[connection]
+id=KineAnchor phone tether
+type=ethernet
+autoconnect=true
+autoconnect-priority=-10
+
+[match]
+driver=rndis_host;cdc_ncm;cdc_ether
+
+[ipv4]
+method=auto
+route-metric=2000
+
+[ipv6]
+method=auto
+route-metric=2000

@@ -10,16 +10,11 @@ use std::sync::{
 pub struct X11OverlayApp {
     engine: Arc<Mutex<Engine>>,
     running: Arc<AtomicBool>,
-    start_time: std::time::Instant,
 }
 
 impl X11OverlayApp {
     pub fn new(engine: Arc<Mutex<Engine>>, running: Arc<AtomicBool>) -> Self {
-        Self {
-            engine,
-            running,
-            start_time: std::time::Instant::now(),
-        }
+        Self { engine, running }
     }
 }
 
@@ -36,7 +31,7 @@ impl eframe::App for X11OverlayApp {
 
         let screen_rect = ctx.screen_rect();
         let viewport = [screen_rect.width(), screen_rect.height()];
-        let now = self.start_time.elapsed().as_secs_f64();
+        let now = crate::monotonic_secs();
 
         let (dots, color) = {
             let mut engine = self.engine.lock().unwrap();

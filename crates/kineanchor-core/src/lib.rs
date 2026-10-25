@@ -14,7 +14,10 @@ pub mod synthetic;
 pub mod types;
 
 pub use engine::Engine;
-pub use protocol::{Message, PROTOCOL_VERSION, decode_message, encode_message};
+pub use protocol::{
+    DEFAULT_PORT, DecodeError, MAX_LINE_BYTES, Message, PROTOCOL_VERSION, PairingUri,
+    decode_message, encode_message,
+};
 pub use record::{Player, Recorder};
 pub use types::*;
 
@@ -24,7 +27,6 @@ mod tests {
 
     #[test]
     fn test_synthetic_frequency_zero_crossings() {
-        // Sample at 100 Hz over 10 seconds with 0.2 Hz target frequency
         let freq = 0.2;
         let params = SyntheticParams {
             freq_hz: freq,
@@ -45,7 +47,6 @@ mod tests {
             prev_ax = sample.ax;
         }
 
-        // Over 10 seconds at 0.2 Hz, there are 2 complete cycles = 4 zero-crossings
         assert!(
             (3..=5).contains(&zero_crossings),
             "Expected ~4 zero crossings for 0.2 Hz over 10s, got {zero_crossings}"
@@ -57,7 +58,6 @@ mod tests {
         let mut engine = Engine::new(Config::default());
         let viewport = [1920.0, 1080.0];
 
-        // Sustained extreme 10G acceleration for 5 seconds
         for step in 0..300 {
             let now = step as f64 * (1.0 / 60.0);
             let sample = MotionSample {
@@ -74,7 +74,6 @@ mod tests {
             let (dots, status) = engine.tick(now, viewport);
             assert!(matches!(status, Status::Live { .. }));
 
-            // Verify all dots stay within screen bounds + allowable margin
             for dot in dots {
                 assert!(
                     dot.x >= -20.0 && dot.x <= viewport[0] + 20.0,
@@ -99,7 +98,6 @@ mod tests {
         let mut engine = Engine::new(config);
         let viewport = [1000.0, 1000.0];
 
-        // With zero motion offset
         let (dots, _) = engine.tick(0.0, viewport);
         assert!(!dots.is_empty(), "Dot field must not be empty");
 
@@ -146,10 +144,57 @@ mod tests {
     }
 
     #[test]
-    fn test_protocol_line_too_long() {
+    fn test_protocol_line_too_long_and_bad_version() {
         let long_line = "a".repeat(protocol::MAX_LINE_BYTES + 1);
-        let res = decode_message(&long_line);
-        assert_eq!(res, Err(protocol::DecodeError::LineTooLong));
+        assert_eq!(decode_message(&long_line), Err(DecodeError::LineTooLong));
+
+        let bad_v = r#"{"v":2,"type":"future_unknown_type","foo":123}"#;
+        assert_eq!(
+            decode_message(bad_v),
+            Err(DecodeError::UnsupportedVersion(2))
+        );
+
+        let forward_compat = r#"{"v":1,"type":"ping","extra_field":"ignored"}"#;
+        assert_eq!(decode_message(forward_compat), Ok(Message::Ping { v: 1 }));
+    }
+
+    #[test]
+    fn test_golden_vectors_ndjson() {
+        let raw = include_str!("../../../tests/vectors/sample_stream.ndjson");
+        let lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 6);
+
+        let m0 = decode_message(lines[0]).expect("line 0");
+        assert!(matches!(m0, Message::Hello { v: 1, ref device, .. } if device == "Pixel 7"));
+
+        let m1 = decode_message(lines[1]).expect("line 1");
+        assert!(matches!(m1, Message::Welcome { v: 1, .. }));
+
+        for line in &lines[2..5] {
+            let msg = decode_message(line).expect("sample line");
+            let s = MotionSample::try_from(msg).expect("sample conversion");
+            assert_eq!(s.gravity, Some([0.0, 0.0, 9.81]));
+        }
+
+        let m5 = decode_message(lines[5]).expect("line 5");
+        assert_eq!(m5, Message::Ping { v: 1 });
+    }
+
+    #[test]
+    fn test_pairing_uri_roundtrip() {
+        let p = PairingUri {
+            host: "192.168.42.129".to_string(),
+            port: DEFAULT_PORT,
+            pair_secret: "sec_987654".to_string(),
+            fingerprint: "cachyos-laptop".to_string(),
+        };
+        let uri = p.to_uri();
+        assert_eq!(
+            uri,
+            "motion://192.168.42.129:47474?pair=sec_987654&fp=cachyos-laptop"
+        );
+        let parsed = PairingUri::parse(&uri).expect("parse URI");
+        assert_eq!(parsed, p);
     }
 
     #[test]
@@ -157,30 +202,161 @@ mod tests {
         let mut engine = Engine::new(Config::default());
         let viewport = [1920.0, 1080.0];
 
-        // Receive sample at t = 1.0
-        engine.push(
+        // Feed active motion up to t = 1.0
+        for i in 0..=50 {
+            let t = i as f64 * 0.02;
+            engine.push(
+                MotionSample {
+                    t,
+                    ax: 2.0,
+                    ay: 3.0,
+                    az: 0.0,
+                    gx: 0.0,
+                    gy: 0.0,
+                    gz: 0.2,
+                    gravity: Some([0.0, 0.0, 9.81]),
+                },
+                t,
+            );
+            let (dots, status) = engine.tick(t, viewport);
+            assert!(matches!(status, Status::Live { .. }));
+            assert!(!dots.is_empty());
+        }
+
+        // At t = 1.50 (500ms after last sample at 1.0): still Live
+        let (_, status_500ms) = engine.tick(1.50, viewport);
+        assert!(matches!(status_500ms, Status::Live { .. }));
+
+        let (live_x, live_y, _) = engine.current_offset();
+        assert!(live_x.abs() > 1.0 && live_y.abs() > 1.0);
+
+        // Just past 500ms (t = 1.51): transitions to Stale
+        let (dots, status_stale) = engine.tick(1.51, viewport);
+        assert!(matches!(status_stale, Status::Stale { since } if (since - 1.0).abs() < 1e-4));
+        assert!(!dots.is_empty());
+
+        // Mid-crossfade at t = 2.0 (1.0s after last sample, 0.5s into 1.0s fade): blend == 0.5
+        let (dots_mid, _) = engine.tick(2.0, viewport);
+        assert!(!dots_mid.is_empty());
+        assert!((engine.stale_blend() - 0.5).abs() < 1e-3);
+        let (mid_x, mid_y, _) = engine.current_offset();
+        assert!((mid_x - live_x * 0.5).abs() < 1e-2);
+        assert!((mid_y - live_y * 0.5).abs() < 1e-2);
+
+        // At t = 2.5 (1.5s after last sample): crossfade reaches 100% static fallback
+        let (dots_end, status_end) = engine.tick(2.5, viewport);
+        assert!(matches!(status_end, Status::Stale { .. }));
+        assert!(!dots_end.is_empty(), "tick() must never return empty frame");
+        assert!((engine.stale_blend() - 1.0).abs() < 1e-5);
+        let (end_x, end_y, end_r) = engine.current_offset();
+        assert!(end_x.abs() < 1e-4 && end_y.abs() < 1e-4 && end_r.abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_calibration_rotated_stream_matches_unrotated() {
+        let viewport = [1920.0, 1080.0];
+        let mut engine_flat = Engine::new(Config::default());
+        let mut engine_tilted = Engine::new(Config::default());
+
+        // 35 degree pitch around device +X (e.g. phone in angled dash mount)
+        // Rotation around +X by theta maps:
+        // y' =  y * cos(theta) + z * sin(theta)
+        // z' = -y * sin(theta) + z * cos(theta)
+        let theta = 35.0_f32.to_radians();
+        let (sin_t, cos_t) = theta.sin_cos();
+        let rotate_x = |v: [f32; 3]| -> [f32; 3] {
+            [
+                v[0],
+                v[1] * cos_t + v[2] * sin_t,
+                -v[1] * sin_t + v[2] * cos_t,
+            ]
+        };
+
+        let g_flat = [0.0, 0.0, 9.81];
+        let g_tilted = rotate_x(g_flat);
+
+        // Initial rest sample + zero() calibration
+        engine_flat.push(
             MotionSample {
-                t: 1.0,
-                ax: 1.0,
-                ay: 1.0,
+                t: 0.0,
+                ax: 0.0,
+                ay: 0.0,
                 az: 0.0,
                 gx: 0.0,
                 gy: 0.0,
                 gz: 0.0,
-                gravity: None,
+                gravity: Some(g_flat),
             },
-            1.0,
+            0.0,
         );
-        let (_, status) = engine.tick(1.0, viewport);
-        assert!(matches!(status, Status::Live { .. }));
+        engine_flat.zero();
 
-        // At t = 1.6 (600ms without new sample), must transition to Stale
-        let (dots, status) = engine.tick(1.6, viewport);
-        assert!(matches!(status, Status::Stale { since } if (since - 1.0).abs() < 1e-4));
-        assert!(
-            !dots.is_empty(),
-            "Must never freeze / drop dots on cable pull"
+        engine_tilted.push(
+            MotionSample {
+                t: 0.0,
+                ax: 0.0,
+                ay: 0.0,
+                az: 0.0,
+                gx: 0.05, // also inject constant gyro bias on tilted phone
+                gy: -0.03,
+                gz: 0.02,
+                gravity: Some(g_tilted),
+            },
+            0.0,
         );
+        engine_tilted.zero();
+
+        for step in 1..=100 {
+            let t = step as f64 * 0.02;
+            let a_veh = [
+                1.5 * (t as f32 * 1.3).sin(),
+                2.2 * (t as f32 * 0.9).cos(),
+                0.3 * (t as f32 * 2.0).sin(),
+            ];
+            let w_veh = [0.0, 0.0, 0.25 * (t as f32 * 1.1).sin()];
+
+            let s_flat = MotionSample {
+                t,
+                ax: a_veh[0],
+                ay: a_veh[1],
+                az: a_veh[2],
+                gx: w_veh[0],
+                gy: w_veh[1],
+                gz: w_veh[2],
+                gravity: Some(g_flat),
+            };
+
+            let a_rot = rotate_x(a_veh);
+            let w_rot = rotate_x(w_veh);
+            let s_tilted = MotionSample {
+                t,
+                ax: a_rot[0],
+                ay: a_rot[1],
+                az: a_rot[2],
+                gx: w_rot[0] + 0.05,
+                gy: w_rot[1] - 0.03,
+                gz: w_rot[2] + 0.02,
+                gravity: Some(g_tilted),
+            };
+
+            engine_flat.push(s_flat, t);
+            engine_tilted.push(s_tilted, t);
+
+            let (dots_flat, _) = engine_flat.tick(t, viewport);
+            let (dots_tilted, _) = engine_tilted.tick(t, viewport);
+
+            assert_eq!(dots_flat.len(), dots_tilted.len());
+            for (df, dt_dot) in dots_flat.iter().zip(dots_tilted.iter()) {
+                assert!(
+                    (df.x - dt_dot.x).abs() < 1e-3 && (df.y - dt_dot.y).abs() < 1e-3,
+                    "Mismatch at step {step}: flat=({}, {}) vs tilted=({}, {})",
+                    df.x,
+                    df.y,
+                    dt_dot.x,
+                    dt_dot.y
+                );
+            }
+        }
     }
 
     #[test]

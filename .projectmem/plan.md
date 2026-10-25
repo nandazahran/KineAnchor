@@ -17,7 +17,7 @@ Full plan: `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`.
 
 - [x] P0 scaffold: workspace (core, desktop bin, android-ffi), Cargo.lock tracked, SPDX, deny.toml, CI
 - [x] P1 Linux layer-shell overlay + synthetic mode (spike `wayapp` vs custom SCTK glue first)
-- [ ] P2 phone stream over USB tether (NDJSON v1, QR pairing, watchdog fallback, fake_phone example)
+- [x] P2 phone stream over USB tether (NDJSON v1, QR pairing, watchdog fallback, fake_phone example)
 - [ ] P3 Windows overlay
 - [ ] P4 Android overlay + F-Droid
 - [ ] P5 polish (ship tuning, controller, mDNS, tray, GNOME extension)

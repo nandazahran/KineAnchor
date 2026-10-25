@@ -1,0 +1,27 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Fixed root helper invoked via pkexec (no user arguments accepted).
+set -eu
+
+NM_SRC="/usr/share/kineanchor/90-kineanchor-tether.nmconnection"
+NM_DST="/etc/NetworkManager/system-connections/90-kineanchor-tether.nmconnection"
+
+if [ -f "$NM_SRC" ] && [ -d "/etc/NetworkManager/system-connections" ]; then
+    install -m 0600 -o root -g root "$NM_SRC" "$NM_DST"
+    if command -v nmcli >/dev/null 2>&1; then
+        nmcli connection reload || true
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet ufw; then
+    if command -v ufw >/dev/null 2>&1; then
+        ufw allow 47474/tcp comment 'KineAnchor sensor stream' >/dev/null 2>&1 || true
+    fi
+fi
+
+if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet firewalld; then
+    if command -v firewall-cmd >/dev/null 2>&1; then
+        firewall-cmd --permanent --add-port=47474/tcp >/dev/null 2>&1 || true
+        firewall-cmd --reload >/dev/null 2>&1 || true
+    fi
+fi

@@ -39,7 +39,10 @@ struct SurfaceState {
     needs_redraw: bool,
     last_dx: f32,
     last_dy: f32,
-    last_roll: f32,
+    last_r: f32,
+    last_alpha: f32,
+    last_count: usize,
+    last_color: [u8; 4],
 }
 
 pub struct WaylandOverlayApp {
@@ -51,7 +54,6 @@ pub struct WaylandOverlayApp {
     layer_shell: LayerShell,
     surfaces: Vec<SurfaceState>,
     engine: Arc<Mutex<Engine>>,
-    start_time: Instant,
 }
 
 impl WaylandOverlayApp {
@@ -92,7 +94,6 @@ impl WaylandOverlayApp {
             layer_shell,
             surfaces: Vec::new(),
             engine,
-            start_time: Instant::now(),
         })
     }
 
@@ -149,12 +150,15 @@ impl WaylandOverlayApp {
             needs_redraw: true,
             last_dx: 0.0,
             last_dy: 0.0,
-            last_roll: 0.0,
+            last_r: 0.0,
+            last_alpha: 0.0,
+            last_count: 0,
+            last_color: [0; 4],
         });
     }
 
     pub fn tick_and_draw(&mut self) {
-        let now = self.start_time.elapsed().as_secs_f64();
+        let now = crate::monotonic_secs();
 
         for surface in &mut self.surfaces {
             if !surface.configured || surface.width == 0 || surface.height == 0 {
@@ -173,21 +177,26 @@ impl WaylandOverlayApp {
                 (dots_ref.to_vec(), color, edge_band)
             };
 
-            // Calculate motion delta to skip unnecessary redraws when dots are static
-            let current_dx = dots.first().map_or(0.0, |d| d.x);
-            let current_dy = dots.first().map_or(0.0, |d| d.y);
-            let current_roll = dots.first().map_or(0.0, |_| 0.0);
-            let is_moving = (current_dx - surface.last_dx).abs() > 0.25
+            let (current_dx, current_dy, current_r, current_alpha) = dots
+                .first()
+                .map_or((0.0, 0.0, 0.0, 0.0), |d| (d.x, d.y, d.r, d.alpha));
+            let is_changed = (current_dx - surface.last_dx).abs() > 0.25
                 || (current_dy - surface.last_dy).abs() > 0.25
-                || (current_roll - surface.last_roll).abs() > 0.005;
+                || (current_r - surface.last_r).abs() > 0.05
+                || (current_alpha - surface.last_alpha).abs() > 0.01
+                || dots.len() != surface.last_count
+                || color != surface.last_color;
 
-            if !is_moving && !surface.needs_redraw {
+            if !is_changed && !surface.needs_redraw {
                 continue;
             }
 
             surface.last_dx = current_dx;
             surface.last_dy = current_dy;
-            surface.last_roll = current_roll;
+            surface.last_r = current_r;
+            surface.last_alpha = current_alpha;
+            surface.last_count = dots.len();
+            surface.last_color = color;
             surface.needs_redraw = false;
 
             let (buffer, canvas) = match surface.pool.create_buffer(

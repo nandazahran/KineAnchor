@@ -1,0 +1,4 @@
+[KineAnchor]
+title=KineAnchor Motion Sensor Stream
+description=Local LAN/USB tether sensor stream for KineAnchor motion sickness overlay
+ports=47474/tcp

@@ -1,0 +1,45 @@
+# Maintainer: Nanda Zahran <https://github.com/nandazahran>
+pkgname=kineanchor
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Cross-platform motion sickness overlay (Wayland wlr-layer-shell & X11)"
+arch=('x86_64' 'aarch64')
+url="https://github.com/nandazahran/KineAnchor"
+license=('GPL-3.0-or-later')
+depends=('gcc-libs' 'glibc' 'wayland' 'libxkbcommon')
+makedepends=('cargo')
+optdepends=(
+  'networkmanager: automatic USB tether route metric profile'
+  'polkit: one-click network & firewall setup from GUI'
+)
+source=()
+sha256sums=()
+
+build() {
+  cd "$startdir/../.."
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release -p kineanchor
+}
+
+check() {
+  cd "$startdir/../.."
+  export CARGO_TARGET_DIR=target
+  cargo test --frozen --workspace
+}
+
+package() {
+  cd "$startdir/../.."
+  install -Dm755 "target/release/kineanchor" "$pkgdir/usr/bin/kineanchor"
+  install -Dm755 "packaging/linux/kineanchor-netsetup" "$pkgdir/usr/lib/kineanchor/kineanchor-netsetup"
+  install -Dm644 "packaging/linux/90-kineanchor-tether.nmconnection" \
+    "$pkgdir/usr/share/kineanchor/90-kineanchor-tether.nmconnection"
+  install -Dm644 "packaging/linux/io.github.nandazahran.kineanchor.policy" \
+    "$pkgdir/usr/share/polkit-1/actions/io.github.nandazahran.kineanchor.policy"
+  install -Dm644 "packaging/linux/io.github.nandazahran.kineanchor.desktop" \
+    "$pkgdir/usr/share/applications/io.github.nandazahran.kineanchor.desktop"
+  install -Dm644 "packaging/linux/ufw-kineanchor" \
+    "$pkgdir/etc/ufw/applications.d/kineanchor"
+  install -Dm644 "packaging/linux/firewalld-kineanchor.xml" \
+    "$pkgdir/usr/lib/firewalld/services/kineanchor.xml"
+  install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}

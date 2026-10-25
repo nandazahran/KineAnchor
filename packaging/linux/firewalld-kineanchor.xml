@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<service>
+  <short>KineAnchor</short>
+  <description>Local LAN/USB tether sensor stream for KineAnchor motion sickness overlay.</description>
+  <port protocol="tcp" port="47474"/>
+</service>

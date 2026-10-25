@@ -6,7 +6,7 @@ _Last updated: 2026-10-25_
 The cross-platform app to help prevent motion sickness
 
 ## Recent issues
-- No issues logged yet.
+- [DONE] #0001 Clock mismatch: settings_ui used SystemTime::UNIX_EPOCH while overlays used Instant::now() and also mutated Engine by calling tick(100x100) from UI thread [crates/kineanchor/src/settings_ui.rs:41] -> Unified process-wide monotonic_secs() clock across overlays, provider router, and UI; added non-mutating Engine::status(now) so UI thread no longer calls tick(100x100) [crates/kineanchor/src/lib.rs:14] (fixed)
 
 ## Decisions
 - UI: egui for desktop settings and dot painting; Wayland overlay via smithay-client-toolkit layer-shell + egui-wgpu (no winit); Android uses Kotlin shell + Rust core over JNI, not eframe. GPUI rejected. [docs/ARCHITECTURE.md]

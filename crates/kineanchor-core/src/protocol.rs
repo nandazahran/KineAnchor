@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_LINE_BYTES: usize = 1024;
+pub const DEFAULT_PORT: u16 = 47474;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -43,6 +44,11 @@ pub enum Message {
     Ping { v: u32 },
 }
 
+#[derive(Deserialize)]
+struct VersionEnvelope {
+    v: u32,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum DecodeError {
     LineTooLong,
@@ -76,22 +82,68 @@ pub fn decode_message(line: &str) -> Result<Message, DecodeError> {
     if trimmed.is_empty() {
         return Err(DecodeError::InvalidJson("Empty line".to_string()));
     }
+
+    let env: VersionEnvelope =
+        serde_json::from_str(trimmed).map_err(|e| DecodeError::InvalidJson(e.to_string()))?;
+    if env.v != PROTOCOL_VERSION {
+        return Err(DecodeError::UnsupportedVersion(env.v));
+    }
+
     let msg: Message =
         serde_json::from_str(trimmed).map_err(|e| DecodeError::InvalidJson(e.to_string()))?;
 
-    let version = match &msg {
-        Message::Hello { v, .. } => *v,
-        Message::Welcome { v, .. } => *v,
-        Message::Reject { v, .. } => *v,
-        Message::Sample { v, .. } => *v,
-        Message::Ping { v } => *v,
-    };
+    Ok(msg)
+}
 
-    if version != PROTOCOL_VERSION {
-        return Err(DecodeError::UnsupportedVersion(version));
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PairingUri {
+    pub host: String,
+    pub port: u16,
+    pub pair_secret: String,
+    pub fingerprint: String,
+}
+
+impl PairingUri {
+    pub fn to_uri(&self) -> String {
+        format!(
+            "motion://{}:{}?pair={}&fp={}",
+            self.host, self.port, self.pair_secret, self.fingerprint
+        )
     }
 
-    Ok(msg)
+    pub fn parse(uri: &str) -> Result<Self, &'static str> {
+        let rest = uri
+            .trim()
+            .strip_prefix("motion://")
+            .ok_or("Missing motion:// scheme")?;
+        let (addr_part, query_part) = rest.split_once('?').ok_or("Missing query parameters")?;
+        let (host, port_str) = addr_part.rsplit_once(':').ok_or("Missing port")?;
+        if host.is_empty() {
+            return Err("Empty host");
+        }
+        let port: u16 = port_str.parse().map_err(|_| "Invalid port")?;
+
+        let mut pair_secret = None;
+        let mut fingerprint = String::new();
+        for kv in query_part.split('&') {
+            if let Some((k, v)) = kv.split_once('=') {
+                match k {
+                    "pair" | "pin" => pair_secret = Some(v.to_string()),
+                    "fp" => fingerprint = v.to_string(),
+                    _ => {}
+                }
+            }
+        }
+        let pair_secret = pair_secret
+            .filter(|s| !s.is_empty())
+            .ok_or("Missing pair secret")?;
+        Ok(Self {
+            host: host.to_string(),
+            port,
+            pair_secret,
+            fingerprint,
+        })
+    }
 }
 
 impl From<MotionSample> for Message {
