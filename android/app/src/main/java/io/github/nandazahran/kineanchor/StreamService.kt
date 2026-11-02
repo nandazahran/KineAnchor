@@ -33,6 +33,15 @@ class StreamService : Service(), SensorEventListener {
     private var wakeLock: PowerManager.WakeLock? = null
     private var workerThread: Thread? = null
 
+    /** The socket currently serving a session, so a restart can close it and unblock the loop. */
+    @Volatile private var activeSocket: Socket? = null
+
+    /** Listener owned by the worker, closed on stop/restart to release the port immediately. */
+    @Volatile private var serverSocket: ServerSocket? = null
+
+    /** Incremented per start so a superseded worker exits instead of competing for the port. */
+    @Volatile private var sessionGeneration = 0
+
     @Volatile private var latestGyro = FloatArray(3)
     @Volatile private var latestGravity: FloatArray? = null
 
@@ -44,29 +53,76 @@ class StreamService : Service(), SensorEventListener {
             return START_NOT_STICKY
         }
 
-        val targetHost = intent?.getStringExtra(EXTRA_HOST)
+        // A restart with no configuration cannot know which direction to use; stop cleanly
+        // rather than silently picking one.
+        if (intent == null && workerThread == null) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        val targetHost = intent?.getStringExtra(EXTRA_HOST)?.takeIf { it.isNotBlank() }
         val targetPort = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_PORT) ?: Protocol.DEFAULT_PORT
         val pairSecret = intent?.getStringExtra(EXTRA_PAIR_SECRET)
 
         startForegroundNotification()
-        acquireWakeLock()
-        registerSensors()
 
         if (running.compareAndSet(false, true)) {
+            acquireWakeLock()
+            registerSensors()
             workerThread = Thread {
-                runNetworkLoop(targetHost, targetPort, pairSecret)
+                runNetworkLoop(targetHost, targetPort, pairSecret, sessionGeneration)
             }.apply {
                 name = "kineanchor-stream"
                 start()
             }
+        } else if (targetHost != null || pairSecret != null) {
+            // Repeated start intents replace the session instead of stacking a second one.
+            restartWorker(targetHost, targetPort, pairSecret)
         }
         return START_STICKY
     }
 
+    /** Stops the current session completely, then starts one worker for the new direction. */
+    private fun restartWorker(targetHost: String?, targetPort: Int, pairSecret: String?) {
+        sessionGeneration++
+        running.set(false)
+        // Closing the listener and the live socket is what actually unblocks accept()/readLine().
+        runCatching { serverSocket?.close() }
+        serverSocket = null
+        runCatching { activeSocket?.close() }
+        activeSocket = null
+        workerThread?.let { worker ->
+            worker.interrupt()
+            runCatching { worker.join(1_500) }
+        }
+        workerThread = null
+        sampleQueue.clear()
+        running.set(true)
+        workerThread = Thread {
+            runNetworkLoop(targetHost, targetPort, pairSecret, sessionGeneration)
+        }.apply {
+            name = "kineanchor-stream"
+            start()
+        }
+    }
+
     override fun onDestroy() {
         running.set(false)
+        sessionGeneration++
+        runCatching { serverSocket?.close() }
+        serverSocket = null
+        runCatching { activeSocket?.close() }
+        activeSocket = null
+        workerThread?.let { worker ->
+            worker.interrupt()
+            runCatching { worker.join(1_500) }
+        }
+        workerThread = null
+        sampleQueue.clear()
         sensorManager?.unregisterListener(this)
+        sensorManager = null
         wakeLock?.let { if (it.isHeld) it.release() }
+        wakeLock = null
         super.onDestroy()
     }
 
@@ -145,73 +201,142 @@ class StreamService : Service(), SensorEventListener {
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
-    private fun runNetworkLoop(targetHost: String?, port: Int, initialSecret: String?) {
+    private fun runNetworkLoop(
+        targetHost: String?,
+        port: Int,
+        initialSecret: String?,
+        generation: Int,
+    ) {
         val prefs = getSharedPreferences("kineanchor_prefs", Context.MODE_PRIVATE)
         var currentSecret = initialSecret
-        val server = runCatching {
-            ServerSocket(port).apply { soTimeout = 500 }
-        }.getOrNull()
+
+        // Exactly one direction per session: a scanned host means the phone dials the desktop,
+        // no host means the phone listens for the desktop. Never both.
+        val server = if (targetHost == null) {
+            runCatching {
+                ServerSocket().apply {
+                    reuseAddress = true
+                    bind(InetSocketAddress(port))
+                    soTimeout = 500
+                }
+            }.getOrNull()
+        } else {
+            null
+        }
+
+        if (targetHost == null && server == null) {
+            running.set(false)
+            return
+        }
+        serverSocket = server
 
         try {
-            while (running.get()) {
-                var sock: Socket? = null
-                // 1. Accept incoming connection from desktop (Q2 primary: phone listens, desktop dials)
-                if (server != null) {
-                    sock = runCatching { server.accept() }.getOrNull()
-                }
-                // 2. Or dial desktop host if known from QR (LAN fallback)
-                if (sock == null && !targetHost.isNullOrEmpty()) {
-                    sock = runCatching {
+            while (running.get() && generation == sessionGeneration) {
+                val sock: Socket? = if (server != null) {
+                    runCatching { server.accept() }.getOrNull()
+                } else {
+                    runCatching {
                         Socket().apply {
                             connect(InetSocketAddress(targetHost, port), 400)
                         }
                     }.getOrNull()
                 }
 
-                if (sock != null) {
-                    sock.use { activeSocket ->
-                        activeSocket.tcpNoDelay = true
-                        activeSocket.soTimeout = 1500
-                        val savedToken = prefs.getString("paired_token", null)
-                        val hello = Protocol.Message.Hello(
-                            device = Build.MODEL ?: "Android",
-                            token = if (currentSecret == null) savedToken else null,
-                            pair = currentSecret,
-                        )
-                        val writer = OutputStreamWriter(activeSocket.getOutputStream(), Charsets.UTF_8)
-                        val reader = BufferedReader(InputStreamReader(activeSocket.getInputStream(), Charsets.UTF_8))
-
-                        writer.write(Protocol.encode(hello))
-                        writer.flush()
-
-                        val welcomeLine = reader.readLine() ?: return@use
-                        when (val reply = Protocol.decode(welcomeLine)) {
-                            is Protocol.Message.Welcome -> {
-                                prefs.edit()
-                                    .putString("paired_token", reply.token)
-                                    .putString("paired_desktop", reply.name)
-                                    .apply()
-                                currentSecret = null
-                                streamSamples(writer)
-                            }
-                            else -> return@use
-                        }
-                    }
-                } else {
+                if (sock == null) {
                     Thread.sleep(250)
+                    continue
+                }
+
+                // One session at a time: a new peer replaces the old one instead of being
+                // queued behind a peer that never disconnects.
+                runCatching { activeSocket?.close() }
+                activeSocket = sock
+                try {
+                    serveSession(sock, prefs, currentSecret)
+                    currentSecret = null
+                } finally {
+                    runCatching { sock.close() }
+                    if (activeSocket === sock) activeSocket = null
                 }
             }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
         } finally {
             runCatching { server?.close() }
         }
+    }
+
+    /**
+     * Runs one authenticated session to completion.
+     *
+     * A separate reader thread watches the peer: without it, a peer that stops reading (cable
+     * pulled, app killed) never produces a write error and the writer would spin forever. On EOF
+     * or read failure the socket is closed, which makes the next write fail and ends the session.
+     */
+    private fun serveSession(
+        sock: Socket,
+        prefs: android.content.SharedPreferences,
+        pairSecret: String?,
+    ) {
+        runCatching {
+            sock.tcpNoDelay = true
+            sock.soTimeout = 1_500
+        }
+
+        val savedToken = prefs.getString("paired_token", null)
+        val writer = OutputStreamWriter(sock.getOutputStream(), Charsets.UTF_8)
+        val reader = BufferedReader(InputStreamReader(sock.getInputStream(), Charsets.UTF_8))
+
+        val hello = Protocol.Message.Hello(
+            device = Build.MODEL ?: "Android",
+            token = if (pairSecret == null) savedToken else null,
+            pair = pairSecret,
+        )
+        writer.write(Protocol.encode(hello))
+        writer.flush()
+
+        val welcomeLine = runCatching { reader.readLine() }.getOrNull() ?: return
+        val welcome = Protocol.decode(welcomeLine) as? Protocol.Message.Welcome ?: return
+
+        prefs.edit()
+            .putString("paired_token", welcome.token)
+            .putString("paired_desktop", welcome.name)
+            .apply()
+
+        // Detects peer loss; closing here ends the writer loop on the next flush.
+        val watchdog = Thread {
+            runCatching {
+                while (running.get()) {
+                    val line = reader.readLine() ?: break
+                    // Ping/pong keep the session alive; anything else is ignored.
+                    if (line.isNotEmpty()) continue
+                }
+            }
+            runCatching { sock.close() }
+        }.apply {
+            name = "kineanchor-peer"
+            isDaemon = true
+            start()
+        }
+
+        streamSamples(writer)
+        runCatching { sock.close() }
+        runCatching { watchdog.join(500) }
     }
 
     private fun streamSamples(writer: OutputStreamWriter) {
         while (running.get()) {
             val sample = sampleQueue.poll(500, TimeUnit.MILLISECONDS)
             val msg = sample ?: Protocol.Message.Ping
-            writer.write(Protocol.encode(msg))
-            writer.flush()
+            // A failed write ends this session so the loop reconnects with a fresh socket.
+            if (runCatching {
+                    writer.write(Protocol.encode(msg))
+                    writer.flush()
+                }.isFailure
+            ) {
+                sampleQueue.clear()
+                return
+            }
         }
     }
 

@@ -31,6 +31,20 @@ pub enum Source {
     Synthetic,
 }
 
+/// Direction of the desktop/phone TCP session.
+///
+/// Only one side ever dials: `DialPhone` makes the desktop a client, `ListenForPhone`
+/// makes it a server. The phone applies the mirrored rule from the same pairing data.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NetMode {
+    /// Desktop dials the phone over a USB tether gateway (or a persisted target address).
+    #[default]
+    DialPhone,
+    /// Desktop listens and the phone dials over LAN. Never dials.
+    ListenForPhone,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SyntheticParams {
     pub freq_hz: f32,
@@ -60,6 +74,9 @@ pub struct Config {
     pub gain: f32,
     pub invert: [bool; 3], // [x, y, roll]
     pub synthetic: SyntheticParams,
+    /// Absent in config files written before 0.1.0; defaults to `DialPhone`.
+    #[serde(default)]
+    pub net_mode: NetMode,
 }
 
 impl Default for Config {
@@ -75,6 +92,7 @@ impl Default for Config {
             gain: 1.0,
             invert: [false, false, false],
             synthetic: SyntheticParams::default(),
+            net_mode: NetMode::default(),
         }
     }
 }

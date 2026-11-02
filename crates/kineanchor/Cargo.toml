@@ -18,3 +18,4 @@ directories = "6.0"
 [target.'cfg(target_os = "linux")'.dependencies]
 smithay-client-toolkit = { version = "0.21.1", default-features = false }
 wayland-client = "0.31.15"
+libc = "0.2"

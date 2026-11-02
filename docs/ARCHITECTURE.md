@@ -150,7 +150,9 @@ flowchart LR
   G --> H["dot field: edge-band home positions + offset/rotation, wrap"]
 ```
 
-- **Calibration**: `zero()` stores the rest gravity direction (down axis) and gyro bias. Forward axis MVP = horizontal projection of device `+y` or `-z`, whichever has the larger horizontal component. This covers both a flat phone with its top toward the front and a phone upright in a holder. Auto-detection from dominant longitudinal acceleration (PCA) comes in P5.
+- **Calibration**: `zero()` stores the rest gravity direction (down axis) and gyro bias. Forward axis MVP = horizontal projection of device `+y` or `-z`, whichever has the larger horizontal component. This covers both a flat phone with its top toward the front and a phone upright in a holder.
+- **Forward-axis auto-detection**: `PhysicsEngine::push_sample` keeps a 32-sample sliding window of finite samples and runs `align_forward_pca` over it. Only low-yaw-rate samples with meaningful horizontal acceleration contribute; the axis is refreshed only when the estimator returns an angle, and `right_axis` is re-orthogonalised against `up_axis` so the basis stays orthonormal. Non-finite frames are dropped and `zero()` clears the window, so recalibration discards a learned axis.
+- **Session direction**: `Config::net_mode` (`DialPhone` default, `ListenForPhone`) is the single source of truth, mirrored into the running provider through `AuthState::mode`. The desktop either dials (tether gateway or persisted target) or listens — never both. The phone applies the same rule from its start intent: a scanned host means it dials, no host means it listens.
 - **Yaw** = gyro projected on the gravity axis, so yaw does not depend on how the phone is mounted.
 - **Apple convention** (default; per-axis invert in config): accelerate → dots down, brake → dots up, turn left → dots right, turn right → dots left.
 - **Spring-damper** keeps dots from drifting off-screen during sustained input. Car: stiffer/faster. Ship: softer/slower, plus rotation from roll.
@@ -160,7 +162,7 @@ flowchart LR
 
 - One process: eframe settings window on the main thread (normal xdg-toplevel / Win32 window). The overlay backend runs on its own thread with its **own** Wayland connection; several `wl_display` connections per process are legal. The engine is owned by the overlay thread. Config and status pass through `Arc<Mutex<Config>>` and an mpsc channel.
 - Backend selection: `WAYLAND_DISPLAY` set and `zwlr_layer_shell_v1` advertised → layer-shell. Wayland without layer-shell (GNOME) → X11 backend via XWayland, with a warning. Otherwise → X11 / Win32 winit backend.
-- Tray (StatusNotifierItem via `ksni`) and a global toggle hotkey (xdg-desktop-portal GlobalShortcuts) come in P5.
+- Tray (StatusNotifierItem via `ksni`) and a global toggle hotkey (xdg-desktop-portal GlobalShortcuts) are not part of 0.1.0.
 - Config: TOML in the XDG config dir (`directories` crate).
 
 ---

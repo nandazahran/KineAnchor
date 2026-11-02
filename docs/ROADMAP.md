@@ -26,7 +26,7 @@ Environment observed on the dev laptop: KDE Plasma 6.8.1 on Wayland, rustc 1.98,
 
 **Q4: Spec deviation.** The protocol adds optional `gvx,gvy,gvz` (TYPE_GRAVITY) to your `{ax,ay,az,gx,gy,gz,t}`. Without it the receiver cannot know phone orientation, because linear acceleration has gravity removed. OK?
 
-**Q5: Phone mounting assumption for MVP.** Phone top edge points to the vehicle front (flat or upright in a holder). Auto-detection of the forward axis comes in P5. OK for MVP?
+**Q5: Phone mounting assumption.** Phone top edge points to the vehicle front (flat or upright in a holder). The gravity-derived basis is authoritative; `align_forward_pca` refines it from observed longitudinal acceleration once 32 samples are buffered.
 
 **Q6: Android stream sender in Kotlin (~150 lines) vs Rust via JNI.** Sensor callbacks are Kotlin anyway, and golden vectors keep both sides honest. The Rust core is still used on the phone for the overlay via JNI. Recommendation: Kotlin sender.
 
@@ -101,7 +101,8 @@ flowchart LR
 
 ### P5 — Polish
 - Ship tuning from real ferry recordings (heave/roll/pitch, 0.1–0.3 Hz band).
-- Forward-axis auto-detection; mDNS `_motionsync._tcp`; tray (`ksni`); portal global shortcut toggle.
+- Forward-axis auto-detection (`align_forward_pca`, wired through `PhysicsEngine::push_sample`). ✔ 0.1.0
+- mDNS `_motionsync._tcp`; tray (`ksni`); portal global shortcut toggle. Not in 0.1.0.
 - Controller gyro backend (DualSense via hidapi/SDL); IIO laptop provider.
 - GNOME Shell extension (stretch).
 

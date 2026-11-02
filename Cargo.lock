@@ -1658,6 +1658,7 @@ dependencies = [
  "directories",
  "eframe",
  "kineanchor-core",
+ "libc",
  "qrcode",
  "serde",
  "serde_json",

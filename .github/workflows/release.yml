@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allows validating every builder before the real tag exists.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android:
+    name: Android universal APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - run: cargo install cargo-ndk --version 3.5.4 --locked
+      - name: Build JNI libraries for all three ABIs
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+        run: >-
+          cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64
+          -o android/app/src/main/jniLibs
+          build --release -p kineanchor-android-ffi
+      - name: Assemble the universal APK
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest assembleRelease
+      - name: Collect artifact
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release-unsigned.apk \
+             dist/kineanchor-0.1.0-universal-unsigned.apk
+          apk=dist/kineanchor-0.1.0-universal-unsigned.apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            unzip -l "$apk" | grep -q "lib/$abi/libkineanchor_android_ffi.so" \
+              || { echo "missing $abi native library"; exit 1; }
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: dist/*
+          if-no-files-found: error
+
+  windows:
+    name: Windows MSI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build the Windows binary (MSVC toolchain)
+        run: cargo build --locked --release -p kineanchor
+      - name: Install WiX v6
+        run: dotnet tool install --global wix --version 6.0.1
+      - name: Build the MSI
+        run: |
+          wix build packaging/windows/main.wxs -arch x64 -o kineanchor-0.1.0-x86_64.msi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: kineanchor-0.1.0-x86_64.msi
+          if-no-files-found: error
+
+  linux:
+    name: Linux ${{ matrix.arch }} binaries
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+      - run: cargo build --locked --release -p kineanchor
+      - name: Package with the license
+        run: |
+          mkdir -p dist/kineanchor-0.1.0-${{ matrix.arch }}
+          cp target/release/kineanchor LICENSE dist/kineanchor-0.1.0-${{ matrix.arch }}/
+          tar -C dist -czf kineanchor-0.1.0-${{ matrix.arch }}-linux.tar.gz \
+            kineanchor-0.1.0-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}
+          path: kineanchor-0.1.0-${{ matrix.arch }}-linux.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [android, windows, linux]
+    # A manual dispatch validates the builders but must not publish "main" as a release.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Flatten and checksum
+        run: |
+          mkdir -p dist
+          find artifacts -type f \( -name '*.apk' -o -name '*.msi' -o -name '*.tar.gz' \) \
+            -exec cp {} dist/ \;
+          cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "KineAnchor ${GITHUB_REF_NAME}" \
+            --notes "Unsigned 0.1.0 artifacts. Android APK is universal (arm64-v8a, armeabi-v7a, x86_64); the MSI is x86_64 and unsigned. Verify each file against SHA256SUMS.txt before installing."

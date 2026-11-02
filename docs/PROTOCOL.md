@@ -25,5 +25,9 @@ Message types (one JSON object per line, max 1024 bytes; longer lines close the 
 - Security posture: plaintext on a LAN. Worst case of an injected stream = wrong dot motion. Mitigations: token required before samples are accepted, one client at a time, bounded line length, the listener runs only while phone mode is active, and the firewall rule is scoped to the tether interface where possible. TLS is not planned (it adds no meaningful value for this threat model). Revisit if scope changes.
 - mDNS `_motionsync._tcp` (crate `mdns-sd`): nice-to-have, P5.
 
-> Connection direction (ROADMAP Q2, default applied): the phone listens and the desktop dials the phone at the tether/hotspot gateway address. Desktop-listens remains the fallback for a shared Wi-Fi LAN. The protocol is symmetric after TCP connect, so either side can dial.
+> Connection direction: exactly one side dials per session, selected by `Config::net_mode`.
+> - `DialPhone` (default): the Android app listens on `0.0.0.0:47474`; the desktop dials the USB-tether gateway (or the persisted `target_addr`). No QR scan is needed.
+> - `ListenForPhone`: the desktop listens on `0.0.0.0:47474`; the Android app dials the host from the scanned `motion://` URI. The desktop shows the QR in this mode only.
+>
+> The handshake is symmetric after TCP connect, so either side may dial; the framing does not change. The listener only listens and the dialer only dials — a single session never does both.
 

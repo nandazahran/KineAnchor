@@ -71,11 +71,26 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
                 return START_STICKY
             }
             ACTION_UPDATE_CONFIG -> {
-                if (intent != null && enginePtr != 0L) {
+                if (enginePtr != 0L) {
                     applyIntentConfig(intent)
                 }
                 return START_STICKY
             }
+        }
+
+        // A restart with a null intent has no configuration to restore; stop instead of
+        // rendering an overlay with default settings the user never chose.
+        if (intent == null && !running) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
+        if (!NativeEngine.available) {
+            startForegroundNotification(
+                "Native engine failed: ${NativeEngine.loadError}",
+            )
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         if (!Settings.canDrawOverlays(this)) {
@@ -83,13 +98,14 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
             return START_NOT_STICKY
         }
 
-        startForegroundNotification()
+        startForegroundNotification(null)
         if (!running) {
+            // startOverlay reports its own failure and stops the service; never claim Live.
             startOverlay(intent)
-        } else if (intent != null && enginePtr != 0L) {
+        } else if (intent != null) {
             applyIntentConfig(intent)
         }
-        return START_STICKY
+        return if (running) START_STICKY else START_NOT_STICKY
     }
 
     override fun onDestroy() {
@@ -109,8 +125,15 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
     }
 
     private fun startOverlay(intent: Intent?) {
+        if (!NativeEngine.available) {
+            stopSelf()
+            return
+        }
         enginePtr = runCatching { NativeEngine.nativeCreate() }.getOrDefault(0L)
-        if (enginePtr == 0L) return
+        if (enginePtr == 0L) {
+            stopSelf()
+            return
+        }
         if (intent != null) applyIntentConfig(intent)
 
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
@@ -140,7 +163,13 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
 
         val view = DotOverlayView(this)
         overlayView = view
-        wm.addView(view, params)
+        if (runCatching { wm.addView(view, params) }.isFailure) {
+            // Adding the overlay window can fail (permission revoked mid-flight, bad token).
+            overlayView = null
+            stopOverlay()
+            stopSelf()
+            return
+        }
 
         val sm = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         sensorManager = sm
@@ -160,6 +189,10 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
 
     private fun stopOverlay() {
         running = false
+        if (enginePtr != 0L) {
+            NativeEngine.nativeDestroy(enginePtr)
+            enginePtr = 0L
+        }
         Choreographer.getInstance().removeFrameCallback(this)
         sensorManager?.unregisterListener(this)
         overlayView?.let { v ->
@@ -215,7 +248,7 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
         accuracy: Int,
     ) = Unit
 
-    private fun startForegroundNotification() {
+    private fun startForegroundNotification(failureText: String?) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -225,16 +258,23 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
             )
             nm.createNotificationChannel(channel)
         }
+        val title = if (failureText == null) {
+            "KineAnchor Motion Overlay Active"
+        } else {
+            "KineAnchor overlay unavailable"
+        }
+        val body = failureText ?: "Drawing peripheral motion cues over screen"
         val notif = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("KineAnchor Motion Overlay Active")
-                .setContentText("Drawing peripheral motion cues over screen")
+                .setContentTitle(title)
+                .setContentText(body)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .build()
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("KineAnchor Motion Overlay Active")
+                .setContentTitle(title)
+                .setContentText(body)
                 .setSmallIcon(android.R.drawable.ic_menu_compass)
                 .build()
         }

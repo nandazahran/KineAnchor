@@ -20,7 +20,10 @@ use smithay_client_toolkit::{
             LayerSurfaceConfigure,
         },
     },
-    shm::{Shm, ShmHandler, slot::SlotPool},
+    shm::{
+        Shm, ShmHandler,
+        slot::{Buffer, SlotPool},
+    },
 };
 use wayland_client::{
     Connection, QueueHandle,
@@ -33,6 +36,7 @@ use kineanchor_core::{Dot, Engine};
 struct SurfaceState {
     layer: LayerSurface,
     pool: SlotPool,
+    output: Option<wl_output::WlOutput>,
     width: u32,
     height: u32,
     configured: bool,
@@ -43,6 +47,80 @@ struct SurfaceState {
     last_alpha: f32,
     last_count: usize,
     last_color: [u8; 4],
+    /// Bounded ring of reusable buffers with the size each was allocated for. A buffer is drawn
+    /// into only after its `wl_buffer.release`; one still in flight is skipped.
+    buffers: Vec<SurfaceBuffer>,
+}
+
+/// Maximum shm buffers kept per surface. Two is the minimum that lets a frame be drawn while
+/// the previous one is still on screen; three absorbs a compositor that lags a frame.
+const MAX_SURFACE_BUFFERS: usize = 3;
+
+struct SurfaceBuffer {
+    buffer: Buffer,
+    width: u32,
+    height: u32,
+}
+
+impl SurfaceState {
+    /// Renders one frame, or skips it when every buffer is still owned by the compositor.
+    ///
+    /// A `wl_buffer` is only released after a later commit attaches a different one, so a single
+    /// buffer deadlocks. This keeps a small pool and reuses the first released buffer whose size
+    /// matches; the pool never grows past [`MAX_SURFACE_BUFFERS`].
+    fn render(&mut self, dots: &[Dot], color: [u8; 4], edge_band: f32) -> bool {
+        let (width, height) = (self.width, self.height);
+
+        // Drop buffers that no longer match a resized surface.
+        self.buffers
+            .retain(|b| b.width == width && b.height == height);
+
+        let ready = self
+            .buffers
+            .iter()
+            .position(|b| !b.buffer.slot().has_active_buffers());
+
+        let index = match ready {
+            Some(i) => i,
+            None if self.buffers.len() < MAX_SURFACE_BUFFERS => {
+                let stride = width as i32 * 4;
+                match self.pool.create_buffer(
+                    width as i32,
+                    height as i32,
+                    stride,
+                    wl_shm::Format::Argb8888,
+                ) {
+                    Ok((buffer, _)) => {
+                        self.buffers.push(SurfaceBuffer {
+                            buffer,
+                            width,
+                            height,
+                        });
+                        self.buffers.len() - 1
+                    }
+                    Err(_) => return false,
+                }
+            }
+            None => return false,
+        };
+
+        let Some(entry) = self.buffers.get(index) else {
+            return false;
+        };
+        let Some(canvas) = entry.buffer.canvas(&mut self.pool) else {
+            return false;
+        };
+        clear_edge_bands(canvas, width, height, edge_band);
+        render_dots_to_argb(canvas, width, height, dots, color);
+
+        let surface = self.layer.wl_surface();
+        surface.damage_buffer(0, 0, width as i32, height as i32);
+        let attached = self.buffers[index].buffer.attach_to(surface).is_ok();
+        if attached {
+            self.layer.commit();
+        }
+        attached
+    }
 }
 
 pub struct WaylandOverlayApp {
@@ -144,6 +222,7 @@ impl WaylandOverlayApp {
         self.surfaces.push(SurfaceState {
             layer,
             pool,
+            output,
             width: 1920,
             height: 1080,
             configured: false,
@@ -154,6 +233,7 @@ impl WaylandOverlayApp {
             last_alpha: 0.0,
             last_count: 0,
             last_color: [0; 4],
+            buffers: Vec::new(),
         });
     }
 
@@ -167,7 +247,6 @@ impl WaylandOverlayApp {
 
             let width = surface.width;
             let height = surface.height;
-            let stride = width as i32 * 4;
 
             let (dots, color, edge_band) = {
                 let mut engine = self.engine.lock().unwrap();
@@ -199,31 +278,34 @@ impl WaylandOverlayApp {
             surface.last_color = color;
             surface.needs_redraw = false;
 
-            let (buffer, canvas) = match surface.pool.create_buffer(
-                width as i32,
-                height as i32,
-                stride,
-                wl_shm::Format::Argb8888,
-            ) {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-
-            // Clear peripheral edge bands only (leaving the 70% center untouched)
-            clear_edge_bands(canvas, width, height, edge_band);
-
-            // Render anti-aliased filled circles into ARGB buffer
-            render_dots_to_argb(canvas, width, height, &dots, color);
-
-            // Present buffer
-            surface
-                .layer
-                .wl_surface()
-                .damage_buffer(0, 0, width as i32, height as i32);
-            let _ = buffer.attach_to(surface.layer.wl_surface());
-            surface.layer.commit();
+            // Bounded and allocation-free once warm: one reusable buffer per surface, redrawn
+            // only after the compositor released it. A still-active buffer skips this frame.
+            surface.render(&dots, color, edge_band);
         }
     }
+}
+
+/// Blocks until `fd` is readable or `timeout` elapses. `Ok(false)` means the timeout expired.
+fn wait_readable(fd: std::os::fd::BorrowedFd<'_>, timeout: Duration) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+
+    let mut poll_fd = libc::pollfd {
+        fd: fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let millis = timeout.as_millis().min(i32::MAX as u128) as i32;
+
+    // SAFETY: `poll_fd` points at one initialized pollfd and the count matches.
+    let ready = unsafe { libc::poll(&mut poll_fd, 1, millis) };
+    if ready < 0 {
+        let err = std::io::Error::last_os_error();
+        if err.kind() == std::io::ErrorKind::Interrupted {
+            return Ok(false);
+        }
+        return Err(err);
+    }
+    Ok(ready > 0)
 }
 
 /// Clears only the peripheral margin areas where dots live, skipping the center screen.
@@ -360,6 +442,14 @@ impl OutputHandler for WaylandOverlayApp {
         qh: &QueueHandle<Self>,
         output: wl_output::WlOutput,
     ) {
+        // Outputs announced after startup (hotplug) get exactly one surface each.
+        if self
+            .surfaces
+            .iter()
+            .any(|s| s.output.as_ref() == Some(&output))
+        {
+            return;
+        }
         self.create_layer_surface(Some(output), qh);
     }
 
@@ -375,8 +465,11 @@ impl OutputHandler for WaylandOverlayApp {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _output: wl_output::WlOutput,
+        output: wl_output::WlOutput,
     ) {
+        // Remove exactly the gone output; other monitors must keep their overlays. Dropping the
+        // LayerSurface and its pool releases the wl_surface, wl_buffer and shm mapping with it.
+        self.surfaces.retain(|s| s.output.as_ref() != Some(&output));
     }
 }
 
@@ -450,9 +543,15 @@ impl ProvidesRegistryState for WaylandOverlayApp {
 
 smithay_client_toolkit::delegate_dispatch2!(WaylandOverlayApp);
 
+/// Spawns the layer-shell overlay thread.
+///
+/// `running` is the public on/off switch. `on_exit` is set when the thread stops for any reason
+/// (compositor disconnect, protocol error, or a request to stop), so `main` can tear the process
+/// down instead of leaving a live-looking app with no overlay.
 pub fn spawn_wayland_overlay(
     engine: Arc<Mutex<Engine>>,
     running: Arc<AtomicBool>,
+    on_exit: Arc<AtomicBool>,
 ) -> Result<std::thread::JoinHandle<()>, &'static str> {
     let conn = Connection::connect_to_env().map_err(|_| "Failed to connect to Wayland display")?;
     let (globals, mut event_queue) = registry_queue_init::<WaylandOverlayApp>(&conn)
@@ -468,23 +567,63 @@ pub fn spawn_wayland_overlay(
     let handle = std::thread::Builder::new()
         .name("wayland-overlay".into())
         .spawn(move || {
-            let target_interval = Duration::from_millis(20); // 50 Hz frame rate (matches sensor stream)
+            // 50 Hz: matches the sensor stream and bounds the wait for compositor events, so a
+            // quiet desktop still animates instead of blocking inside blocking_dispatch().
+            let target_interval = Duration::from_millis(20);
 
-            while running.load(Ordering::Relaxed) {
+            loop {
+                if !running.load(Ordering::Relaxed) {
+                    break;
+                }
                 let start = Instant::now();
 
-                // Dispatch incoming Wayland protocol events
-                let _ = event_queue.dispatch_pending(&mut app);
+                // Flush outgoing requests; a dead connection ends the overlay instead of
+                // spinning on a closed socket.
+                if conn.flush().is_err() {
+                    eprintln!("Wayland overlay: connection lost while flushing; stopping.");
+                    running.store(false, Ordering::Relaxed);
+                    break;
+                }
 
-                // Tick physics and render frame
+                // Wait for socket readability without blocking past one frame.
+                match conn.prepare_read() {
+                    Some(guard) => match wait_readable(guard.connection_fd(), target_interval) {
+                        Ok(true) => {
+                            if guard.read().is_err() {
+                                eprintln!("Wayland overlay: read failed; stopping.");
+                                running.store(false, Ordering::Relaxed);
+                                break;
+                            }
+                        }
+                        // Timeout: cancel the prepared read and keep rendering.
+                        Ok(false) => drop(guard),
+                        Err(e) => {
+                            drop(guard);
+                            eprintln!("Wayland overlay: poll failed ({e}); stopping.");
+                            running.store(false, Ordering::Relaxed);
+                            break;
+                        }
+                    },
+                    None => std::thread::sleep(target_interval),
+                }
+
+                // Dispatch whatever arrived (including buffer releases) before drawing.
+                if event_queue.dispatch_pending(&mut app).is_err() {
+                    eprintln!("Wayland overlay: dispatch failed; stopping.");
+                    running.store(false, Ordering::Relaxed);
+                    break;
+                }
+
                 app.tick_and_draw();
-                let _ = conn.flush();
 
                 let elapsed = start.elapsed();
                 if elapsed < target_interval {
                     std::thread::sleep(target_interval - elapsed);
                 }
             }
+
+            // Published after every exit path: the caller stops the process when this flips.
+            on_exit.store(true, Ordering::Relaxed);
         })
         .map_err(|_| "Failed to spawn Wayland overlay thread")?;
 

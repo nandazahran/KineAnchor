@@ -4,6 +4,7 @@ It renders subtle peripheral dots that drift opposite to vehicle acceleration, b
 
 Features:
 * On-phone overlay mode: click-through peripheral dots over any app (compatible with Android 12+ untrusted-touch rules by capping overlay window opacity at 0.8).
-* PC Sensor Puck mode: stream 50 Hz accelerometer, gyroscope, and gravity samples to your Linux or Windows laptop over USB tethering or local Wi-Fi with zero cloud or internet connection required.
+* PC Sensor Puck mode: stream 50 Hz accelerometer, gyroscope, and gravity samples to your Linux or Windows laptop over USB tethering or local Wi-Fi with zero cloud or internet connection required. Leave the address field empty to listen for the desktop over USB tether; scan the desktop QR to dial it over Wi-Fi instead.
+* QR pairing uses the on-device camera only to read the desktop's motion:// code. Frames are decoded locally and immediately discarded; camera permission is optional and the code can also be typed in by hand.
 * Car and Ship modes: responsive spring-damper filter for road vehicles plus a 0.1–0.3 Hz wave filter with roll rotation for ships and ferries.
 * 100% offline: no Google Play Services, no telemetry, no cloud dependencies.

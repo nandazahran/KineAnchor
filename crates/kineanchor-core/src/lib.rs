@@ -515,4 +515,109 @@ mod tests {
         );
         assert!(a_long.abs() > 0.5);
     }
+
+    fn yaw_sample(t: f64, yaw: f32, a_long: f32, gravity: [f32; 3]) -> MotionSample {
+        let (sin_y, cos_y) = yaw.sin_cos();
+        MotionSample {
+            t,
+            ax: a_long * sin_y,
+            ay: a_long * cos_y,
+            az: 0.0,
+            gx: 0.0,
+            gy: 0.0,
+            gz: 0.0,
+            gravity: Some(gravity),
+        }
+    }
+
+    /// Feeds a straight-line acceleration stream for `yaw` through the production intake path
+    /// (`push_sample`, called by `Engine::push`) and returns the engine.
+    fn converged_engine(yaw: f32) -> physics::PhysicsEngine {
+        let mut phys = physics::PhysicsEngine::new();
+        for i in 0..80 {
+            let t = i as f64 * 0.02;
+            let a_long = 2.5 * (t as f32 * 2.0).sin();
+            let sample = yaw_sample(t, yaw, a_long, [0.0, 0.0, 9.81]);
+            phys.push_sample(&sample, t);
+        }
+        phys
+    }
+
+    #[test]
+    fn test_pca_activates_through_sample_intake_for_perpendicular_sequences() {
+        // Two headings 90 degrees apart, each starting from the same gravity calibration.
+        for yaw_deg in [45.0_f32, -45.0] {
+            let yaw = yaw_deg.to_radians();
+            let mut phys = converged_engine(yaw);
+
+            // Motion along the true forward axis must land entirely in a_long after auto-detection.
+            let probe = yaw_sample(2.0, yaw, 1.5, [0.0, 0.0, 9.81]);
+            let (a_lat, a_long, _, _, _, _) = phys.project_sample(&probe);
+            assert!(
+                a_lat.abs() < 1e-3,
+                "yaw {yaw_deg} deg: expected no lateral leak, got {a_lat}"
+            );
+            assert!(
+                a_long > 1.4,
+                "yaw {yaw_deg} deg: lost forward energy: {a_long}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_pca_ignores_degenerate_and_non_finite_input() {
+        let mut phys = physics::PhysicsEngine::new();
+        let gravity = [0.0, 0.0, 9.81];
+        let rest = yaw_sample(0.0, 0.0, 0.0, gravity);
+        phys.zero(Some(&rest));
+
+        let probe = yaw_sample(0.0, 0.0, 1.0, gravity);
+        let before = phys.project_sample(&probe);
+
+        // Zero motion carries no directional information; NaN/inf frames must be dropped.
+        for i in 0..80 {
+            let t = i as f64 * 0.02;
+            let sample = MotionSample {
+                t,
+                ax: if i % 2 == 0 { 0.0 } else { f32::NAN },
+                ay: 0.0,
+                az: 0.0,
+                gx: 0.0,
+                gy: f32::INFINITY,
+                gz: 0.0,
+                gravity: Some(gravity),
+            };
+            phys.push_sample(&sample, t);
+        }
+
+        let after = phys.project_sample(&probe);
+        assert_eq!(
+            before, after,
+            "degenerate input must not rotate the calibrated axes"
+        );
+    }
+
+    #[test]
+    fn test_pca_window_resets_on_recalibration() {
+        let yaw = 30.0_f32.to_radians();
+        let mut phys = converged_engine(yaw);
+        let gravity = [0.0, 0.0, 9.81];
+
+        // Recalibration restores the gravity-derived forward axis (device +y).
+        phys.zero(Some(&yaw_sample(2.0, yaw, 0.0, gravity)));
+        let probed = yaw_sample(2.0, yaw, 1.5, gravity);
+        let (a_lat, _, _, _, _, _) = phys.project_sample(&probed);
+        assert!(
+            a_lat.abs() > 0.1,
+            "expected the PCA yaw to be discarded on zero(), got {a_lat}"
+        );
+
+        // Zoomed-out view of the same requirement: the window is empty, so one frame of motion
+        // cannot immediately re-apply the old estimate.
+        let mut fresh = physics::PhysicsEngine::new();
+        fresh.zero(Some(&yaw_sample(0.0, 0.0, 0.0, gravity)));
+        fresh.push_sample(&probed, 0.0);
+        let (fresh_lat, _, _, _, _, _) = fresh.project_sample(&probed);
+        assert_eq!(a_lat, fresh_lat);
+    }
 }

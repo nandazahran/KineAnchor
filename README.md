@@ -30,15 +30,61 @@ KineAnchor renders subtle, click-through peripheral dots that drift opposite to 
 ## Quick Start (Desktop)
 
 ```bash
-# Build and run with settings + QR pairing UI
+# Build and run with settings + the click-through overlay
 cargo run --release -p kineanchor
 
-# Run headless overlay in synthetic mode (works inside isolated network namespace)
+# Overlay only, synthetic motion (no sensors, no UI)
 cargo run --release -p kineanchor -- --no-ui --synthetic
+```
 
+### Connection directions
+
+Exactly one side dials a session; the settings radio button picks which.
+
+| Setting | Who listens | Who dials | Use |
+|---|---|---|---|
+| `Dial phone (USB tether)` (default) | Android app on `0.0.0.0:47474` | Desktop to the tether gateway | Phone plugged in over USB |
+| `Listen for phone (LAN)` | Desktop on `0.0.0.0:47474` | Android app to the QR host | Same Wi-Fi, no cable |
+
+The pairing QR is shown only in **Listen for phone (LAN)** mode, because the phone needs the
+desktop address. In tether mode no QR scan is needed.
+
+Android app: leave the URI field empty and tap *Pair & Start* to listen for the desktop; enter or
+scan a `motion://` URI to dial the desktop instead.
+
+### Developer tools
+
+```bash
 # Simulate a 50 Hz phone sensor stream over loopback
 cargo run -p kineanchor --example fake_phone -- --listen 127.0.0.1:47474
+
+# Record a live session to NDJSON (desktop dials the phone; uses the stored pairing token)
+cargo run -p kineanchor --example record_stream -- <phone-host>:47474 capture.ndjson
+
+# Replay a capture through the real engine and print the resulting status and dot offset
+cargo run -p kineanchor --example replay_stream -- capture.ndjson
 ```
+
+`replay_stream` rejects malformed JSON, unsupported protocol versions, and lines over 1024 bytes
+with a line-numbered error, so a corrupt capture cannot be silently half-applied.
+
+## Installable artifacts (0.1.0)
+
+| Artifact | Name |
+|---|---|
+| Android (universal: `arm64-v8a`, `armeabi-v7a`, `x86_64`) | `kineanchor-0.1.0-universal-unsigned.apk` |
+| Windows x86_64 (WiX MSI) | `kineanchor-0.1.0-x86_64.msi` |
+| Linux x86_64 | `kineanchor-0.1.0-x86_64-linux.tar.gz` |
+| Linux aarch64 | `kineanchor-0.1.0-aarch64-linux.tar.gz` |
+| Checksums | `SHA256SUMS.txt` |
+
+**These 0.1.0 artifacts are unsigned.** The APK is not Play-signed and the MSI has no Authenticode
+signature, so Windows SmartScreen and Android install flows will warn. Verify each file against
+`SHA256SUMS.txt` from the same release before installing.
+
+Android permissions requested: network access, foreground service (special use), wake lock,
+camera (QR pairing only), display over other apps, and notifications on Android 13+. Camera frames
+are decoded on-device and discarded; nothing is uploaded.
 
 ## Documentation
 

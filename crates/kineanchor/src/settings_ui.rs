@@ -4,7 +4,7 @@ use crate::config_store::{save_config, save_pairing};
 use crate::net_provider::AuthState;
 use crate::udev_hint::{CableHint, detect_local_ip, probe_cable_hint};
 use eframe::egui;
-use kineanchor_core::{Config, Engine, PairingUri, Source, Status, Vehicle};
+use kineanchor_core::{Config, Engine, NetMode, PairingUri, Source, Status, Vehicle};
 use qrcode::{Color as QrColor, QrCode};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
@@ -87,8 +87,10 @@ impl SettingsApp {
     }
 }
 
-impl eframe::App for SettingsApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+impl SettingsApp {
+    /// Builds the settings panel. Called by the settings root viewport and reused by the
+    /// combined desktop app so both surfaces share one event loop.
+    pub fn ui(&mut self, ctx: &egui::Context) {
         let mut config_changed = false;
 
         if self.last_probe.elapsed() >= Duration::from_secs(2) {
@@ -199,6 +201,31 @@ impl eframe::App for SettingsApp {
                     ui.separator();
                     ui.label(egui::RichText::new("Phone Sensor Connection (USB / LAN)").strong());
 
+                    ui.horizontal(|ui| {
+                        ui.label("Connection:");
+                        if ui
+                            .selectable_value(
+                                &mut self.config.net_mode,
+                                NetMode::DialPhone,
+                                "Dial phone (USB tether)",
+                            )
+                            .clicked()
+                        {
+                            config_changed = true;
+                        }
+                        if ui
+                            .selectable_value(
+                                &mut self.config.net_mode,
+                                NetMode::ListenForPhone,
+                                "Listen for phone (LAN)",
+                            )
+                            .clicked()
+                        {
+                            config_changed = true;
+                            self.refresh_qr(false);
+                        }
+                    });
+
                     let hint_color = match self.cable_hint {
                         CableHint::TetherActive { .. } => egui::Color32::from_rgb(46, 204, 113),
                         CableHint::UsbPluggedNoTether { .. } => {
@@ -213,13 +240,14 @@ impl eframe::App for SettingsApp {
                             Some(name) => ui.label(format!("Paired phone: {name}")),
                             None => ui.label("Paired phone: None"),
                         };
-                        if ui
-                            .button(if self.show_qr {
-                                "Hide Pairing QR"
-                            } else {
-                                "Pair Phone (QR)"
-                            })
-                            .clicked()
+                        if self.config.net_mode == NetMode::ListenForPhone
+                            && ui
+                                .button(if self.show_qr {
+                                    "Hide Pairing QR"
+                                } else {
+                                    "Pair Phone (QR)"
+                                })
+                                .clicked()
                         {
                             self.show_qr = !self.show_qr;
                             if self.show_qr {
@@ -237,9 +265,13 @@ impl eframe::App for SettingsApp {
                         }
                     });
 
-                    if self.show_qr {
+                    if self.config.net_mode == NetMode::DialPhone {
+                        ui.label(
+                            "Desktop dials the phone: enable USB tethering, no QR scan needed.",
+                        );
+                    } else if self.show_qr {
                         ui.group(|ui| {
-                            ui.label("1. Plug USB cable & enable USB Tethering on phone");
+                            ui.label("1. Phone must be on the same Wi-Fi/LAN as this desktop");
                             ui.label("2. Scan this QR code in KineAnchor Android app:");
                             if let Some((w, ref matrix)) = self.qr_matrix {
                                 let module_px = 4.0_f32;
@@ -428,8 +460,11 @@ impl eframe::App for SettingsApp {
         });
 
         if config_changed {
-            let mut eng = self.engine.lock().unwrap();
-            eng.set_config(self.config);
+            {
+                let mut eng = self.engine.lock().unwrap();
+                eng.set_config(self.config);
+            }
+            self.auth.lock().unwrap().mode = self.config.net_mode;
             save_config(&self.config);
         }
 

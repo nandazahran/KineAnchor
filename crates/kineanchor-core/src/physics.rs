@@ -3,6 +3,10 @@
 use crate::types::{Config, MotionSample, Vehicle};
 use core::f32::consts::PI;
 
+/// Sliding window size for forward-axis auto-detection. Below this the gravity-derived
+/// forward axis is the only calibration source.
+const PCA_WINDOW: usize = 32;
+
 #[derive(Debug, Clone, Default)]
 pub struct SpringState {
     pub pos: [f32; 2], // [x, y] in screen pixels
@@ -39,6 +43,8 @@ pub struct PhysicsEngine {
     sample_count: u32,
     rate_timer: f64,
     current_rate_hz: f32,
+    pca_window: Vec<MotionSample>,
+    pca_cursor: usize,
 }
 
 impl Default for PhysicsEngine {
@@ -66,6 +72,13 @@ fn norm3(v: [f32; 3]) -> Option<[f32; 3]> {
     } else {
         None
     }
+}
+
+fn is_finite_sample(s: &MotionSample) -> bool {
+    let accel_ok = s.ax.is_finite() && s.ay.is_finite() && s.az.is_finite();
+    let gyro_ok = s.gx.is_finite() && s.gy.is_finite() && s.gz.is_finite();
+    let gravity_ok = s.gravity.is_none_or(|g| g.iter().all(|v| v.is_finite()));
+    accel_ok && gyro_ok && gravity_ok && s.t.is_finite()
 }
 
 /// Computes orthonormal vehicle basis (right, forward, up) in device coordinates from gravity.
@@ -113,6 +126,8 @@ impl PhysicsEngine {
             sample_count: 0,
             rate_timer: 0.0,
             current_rate_hz: 0.0,
+            pca_window: Vec::with_capacity(PCA_WINDOW),
+            pca_cursor: 0,
         }
     }
 
@@ -130,6 +145,8 @@ impl PhysicsEngine {
         self.state = SpringState::default();
         self.stale_anchor = None;
         self.filter = FilterState::default();
+        self.pca_window.clear();
+        self.pca_cursor = 0;
     }
 
     pub fn record_sample(&mut self, arrival: f64) {
@@ -144,6 +161,34 @@ impl PhysicsEngine {
             self.sample_count = 0;
             self.rate_timer = arrival;
         }
+    }
+
+    /// Records arrival bookkeeping and feeds the forward-axis auto-detection window.
+    ///
+    /// Non-finite samples are dropped rather than buffered, so a corrupt frame cannot poison
+    /// the PCA covariance. The axis is only replaced when `align_forward_pca` returns an
+    /// estimate, which keeps gravity calibration authoritative until enough motion is seen.
+    pub fn push_sample(&mut self, sample: &MotionSample, arrival: f64) {
+        self.record_sample(arrival);
+
+        if !is_finite_sample(sample) {
+            return;
+        }
+
+        if self.pca_window.len() < PCA_WINDOW {
+            self.pca_window.push(*sample);
+        } else {
+            self.pca_window[self.pca_cursor] = *sample;
+            self.pca_cursor = (self.pca_cursor + 1) % PCA_WINDOW;
+        }
+
+        if self.pca_window.len() < PCA_WINDOW {
+            return;
+        }
+        // The window is moved out so the estimator can mutate the axes while reading it.
+        let window = std::mem::take(&mut self.pca_window);
+        let _ = self.align_forward_pca(&window);
+        self.pca_window = window;
     }
 
     pub fn sample_rate_hz(&self) -> f32 {
@@ -304,6 +349,9 @@ impl PhysicsEngine {
     /// in the plane orthogonal to `up_axis`. Returns the applied yaw correction in radians.
     pub fn align_forward_pca(&mut self, samples: &[MotionSample]) -> Option<f32> {
         if samples.len() < 10 {
+            return None;
+        }
+        if samples.iter().any(|s| !is_finite_sample(s)) {
             return None;
         }
         if !self.is_calibrated {

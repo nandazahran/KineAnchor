@@ -41,7 +41,7 @@ impl Engine {
     }
 
     pub fn push(&mut self, sample: MotionSample, arrival: f64) {
-        self.physics.record_sample(arrival);
+        self.physics.push_sample(&sample, arrival);
         self.last_sample = Some(sample);
         self.last_stale_blend = 0.0;
     }

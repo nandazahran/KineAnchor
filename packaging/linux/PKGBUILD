@@ -12,24 +12,33 @@ optdepends=(
   'networkmanager: automatic USB tether route metric profile'
   'polkit: one-click network & firewall setup from GUI'
 )
-source=()
-sha256sums=()
+# Released source tarball, not the caller's checkout.
+source=("https://github.com/nandazahran/KineAnchor/archive/refs/tags/v${pkgver}.tar.gz")
+# Placeholder until the v${pkgver} tag exists. Release preparation replaces it with
+# `sha256sum v${pkgver}.tar.gz`; makepkg --verifysource fails loudly until then.
+sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+
+prepare() {
+  cd "${srcdir}/KineAnchor-${pkgver}"
+  # Build offline against the vendored lockfile.
+  cargo fetch --locked
+}
 
 build() {
-  cd "$startdir/../.."
-  export CARGO_TARGET_DIR=target
+  cd "${srcdir}/KineAnchor-${pkgver}"
+  export CARGO_TARGET_DIR="${srcdir}/target"
   cargo build --frozen --release -p kineanchor
 }
 
 check() {
-  cd "$startdir/../.."
-  export CARGO_TARGET_DIR=target
+  cd "${srcdir}/KineAnchor-${pkgver}"
+  export CARGO_TARGET_DIR="${srcdir}/target"
   cargo test --frozen --workspace
 }
 
 package() {
-  cd "$startdir/../.."
-  install -Dm755 "target/release/kineanchor" "$pkgdir/usr/bin/kineanchor"
+  cd "${srcdir}/KineAnchor-${pkgver}"
+  install -Dm755 "${srcdir}/target/release/kineanchor" "$pkgdir/usr/bin/kineanchor"
   install -Dm755 "packaging/linux/kineanchor-netsetup" "$pkgdir/usr/lib/kineanchor/kineanchor-netsetup"
   install -Dm644 "packaging/linux/90-kineanchor-tether.nmconnection" \
     "$pkgdir/usr/share/kineanchor/90-kineanchor-tether.nmconnection"
@@ -42,4 +51,10 @@ package() {
   install -Dm644 "packaging/linux/firewalld-kineanchor.xml" \
     "$pkgdir/usr/lib/firewalld/services/kineanchor.xml"
   install -Dm644 "LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # Optional GNOME integration ships as data only; nothing is installed or enabled globally.
+  install -d "$pkgdir/usr/share/kineanchor/gnome-extension"
+  install -Dm644 "packaging/gnome-extension/extension.js" \
+    "$pkgdir/usr/share/kineanchor/gnome-extension/extension.js"
+  install -Dm644 "packaging/gnome-extension/metadata.json" \
+    "$pkgdir/usr/share/kineanchor/gnome-extension/metadata.json"
 }

@@ -3,7 +3,7 @@
 use crate::provider::{Provider, ProviderEvent};
 use crate::udev_hint::{CableHint, probe_cable_hint};
 use kineanchor_core::{
-    DEFAULT_PORT, MAX_LINE_BYTES, Message, MotionSample, PROTOCOL_VERSION, decode_message,
+    DEFAULT_PORT, MAX_LINE_BYTES, Message, MotionSample, NetMode, PROTOCOL_VERSION, decode_message,
     encode_message,
 };
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,8 @@ pub struct AuthState {
     pub desktop_name: String,
     pub target_addr: Option<String>,
     pub port: u16,
+    /// Session direction, kept live so a settings change applies without a restart.
+    pub mode: NetMode,
 }
 
 impl Default for AuthState {
@@ -60,6 +62,7 @@ impl AuthState {
             desktop_name: hostname,
             target_addr: None,
             port,
+            mode: NetMode::default(),
         }
     }
 
@@ -153,11 +156,22 @@ impl NetProvider {
         }
     }
 
+    /// Selects the session direction. `DialPhone` never binds, `ListenForPhone` never dials.
+    ///
+    /// The choice is stored in the shared [`AuthState`] so a settings change applies to the
+    /// running provider without a restart.
+    pub fn with_mode(self, mode: NetMode) -> Self {
+        self.auth.lock().unwrap().mode = mode;
+        self
+    }
+
+    /// Binds a caller-chosen listener for integration tests. Implies `ListenForPhone`.
     pub fn with_bind_addr(
         auth: Arc<Mutex<AuthState>>,
         bind_addr: impl Into<String>,
         bound_addr_out: Option<Arc<Mutex<Option<SocketAddr>>>>,
     ) -> Self {
+        auth.lock().unwrap().mode = NetMode::ListenForPhone;
         Self {
             auth,
             bind_addr: bind_addr.into(),
@@ -313,28 +327,58 @@ impl Provider for NetProvider {
     }
 
     fn run(self: Box<Self>, tx: Sender<ProviderEvent>, stop: Arc<AtomicBool>) {
-        let listener = TcpListener::bind(&self.bind_addr).ok();
-        if let Some(ref l) = listener {
-            let _ = l.set_nonblocking(true);
-            if let Some(ref out) = self.bound_addr_out {
-                *out.lock().unwrap() = l.local_addr().ok();
+        loop {
+            let mode = self.auth.lock().unwrap().mode;
+            match mode {
+                NetMode::ListenForPhone => self.run_listener(&tx, &stop),
+                NetMode::DialPhone => self.run_dialer(&tx, &stop),
+            }
+            if stop.load(Ordering::Relaxed) {
+                return;
             }
         }
+    }
+}
 
+impl NetProvider {
+    /// Binds the configured address and serves inbound phone sessions. Never dials.
+    fn run_listener(&self, tx: &Sender<ProviderEvent>, stop: &Arc<AtomicBool>) {
+        let listener = match TcpListener::bind(&self.bind_addr) {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "Net: cannot listen on {} ({e}); no phone sessions will be accepted",
+                    self.bind_addr
+                );
+                return;
+            }
+        };
+        let _ = listener.set_nonblocking(true);
+        if let Some(ref out) = self.bound_addr_out {
+            *out.lock().unwrap() = listener.local_addr().ok();
+        }
+
+        while !stop.load(Ordering::Relaxed) {
+            if self.auth.lock().unwrap().mode != NetMode::ListenForPhone {
+                return;
+            }
+            match listener.accept() {
+                Ok((stream, _peer)) => handle_session(stream, &self.auth, tx, stop),
+                Err(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
+        }
+    }
+
+    /// Dials the phone (persisted target or USB tether gateway). Never binds a listener.
+    fn run_dialer(&self, tx: &Sender<ProviderEvent>, stop: &Arc<AtomicBool>) {
         let mut last_dial = Instant::now()
             .checked_sub(Duration::from_secs(5))
             .unwrap_or_else(Instant::now);
 
         while !stop.load(Ordering::Relaxed) {
-            // 1. Check incoming connection on listener (fallback LAN or phone-dials-desktop)
-            if let Some(ref l) = listener {
-                if let Ok((stream, _peer)) = l.accept() {
-                    handle_session(stream, &self.auth, &tx, &stop);
-                    continue;
-                }
+            if self.auth.lock().unwrap().mode != NetMode::DialPhone {
+                return;
             }
-
-            // 2. Periodically dial phone if target_addr or USB tether gateway is available
             if last_dial.elapsed() >= Duration::from_millis(500) {
                 last_dial = Instant::now();
                 let dial_target = {
@@ -343,15 +387,11 @@ impl Provider for NetProvider {
                     g.target_addr
                         .clone()
                         .filter(|s| !s.trim().is_empty())
-                        .or_else(|| {
-                            if let CableHint::TetherActive {
+                        .or_else(|| match probe_cable_hint() {
+                            CableHint::TetherActive {
                                 gateway: Some(gw), ..
-                            } = probe_cable_hint()
-                            {
-                                Some(format!("{gw}:{port}"))
-                            } else {
-                                None
-                            }
+                            } => Some(format!("{gw}:{port}")),
+                            _ => None,
                         })
                 };
 
@@ -361,7 +401,7 @@ impl Provider for NetProvider {
                             if let Ok(stream) =
                                 TcpStream::connect_timeout(&addr, Duration::from_millis(250))
                             {
-                                handle_session(stream, &self.auth, &tx, &stop);
+                                handle_session(stream, &self.auth, tx, stop);
                                 continue;
                             }
                         }

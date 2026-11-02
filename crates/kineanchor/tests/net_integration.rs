@@ -2,7 +2,9 @@
 
 use kineanchor::net_provider::{AuthState, NetProvider};
 use kineanchor::provider::{Provider, ProviderEvent};
-use kineanchor_core::{Message, MotionSample, PROTOCOL_VERSION, decode_message, encode_message};
+use kineanchor_core::{
+    Message, MotionSample, NetMode, PROTOCOL_VERSION, decode_message, encode_message,
+};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{
@@ -190,16 +192,17 @@ fn test_net_provider_pair_disconnect_and_reconnect_with_token() {
 
 #[test]
 fn test_net_provider_dials_phone_listener() {
-    // Phone listens (Q2 primary direction), desktop NetProvider dials phone
+    // Phone listens (primary direction), desktop NetProvider dials the phone and never binds.
     let phone_listener = TcpListener::bind("127.0.0.1:0").expect("bind phone listener");
     let phone_addr = phone_listener.local_addr().unwrap();
 
     let mut auth_state = AuthState::new(phone_addr.port());
     auth_state.paired_token = Some("pre_shared_tok_123".to_string());
     auth_state.target_addr = Some(phone_addr.to_string());
+    auth_state.mode = NetMode::DialPhone;
     let auth = Arc::new(Mutex::new(auth_state));
 
-    let provider = Box::new(NetProvider::with_bind_addr(auth, "127.0.0.1:0", None));
+    let provider = Box::new(NetProvider::new(auth));
     let (tx, rx) = mpsc::channel();
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
@@ -251,4 +254,65 @@ fn test_net_provider_dials_phone_listener() {
 
     stop.store(true, Ordering::Relaxed);
     let _ = handle.join();
+}
+
+#[test]
+fn test_net_provider_dial_mode_never_binds() {
+    // DialPhone must not occupy a listening port: hold the configured port ourselves, then
+    // assert the desktop still reaches the phone as a client.
+    let occupied = TcpListener::bind("127.0.0.1:0").expect("occupy port");
+    let occupied_port = occupied.local_addr().unwrap().port();
+    let phone_listener = TcpListener::bind("127.0.0.1:0").expect("phone bind");
+    let phone_addr = phone_listener.local_addr().unwrap();
+
+    let mut auth_state = AuthState::new(occupied_port);
+    auth_state.paired_token = Some("tok_dial_only".to_string());
+    auth_state.target_addr = Some(phone_addr.to_string());
+    auth_state.mode = NetMode::DialPhone;
+    let auth = Arc::new(Mutex::new(auth_state));
+
+    let provider = Box::new(NetProvider::new(auth));
+    let (tx, rx) = mpsc::channel();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+    let handle = std::thread::spawn(move || provider.run(tx, stop_clone));
+
+    let (mut phone_stream, _) = phone_listener
+        .accept()
+        .expect("desktop must dial even though its own port is occupied");
+
+    // The dialing side runs the stream's server role: it waits for the phone's Hello.
+    phone_stream
+        .write_all(
+            encode_message(&Message::Hello {
+                v: PROTOCOL_VERSION,
+                device: "LanPhone".to_string(),
+                token: Some("tok_dial_only".to_string()),
+                pair: None,
+            })
+            .unwrap()
+            .as_bytes(),
+        )
+        .unwrap();
+    let mut reader = BufReader::new(phone_stream.try_clone().unwrap());
+    let mut welcome_line = String::new();
+    reader.read_line(&mut welcome_line).unwrap();
+    assert!(
+        matches!(decode_message(&welcome_line), Ok(Message::Welcome { .. })),
+        "desktop must answer Welcome, got {welcome_line:?}"
+    );
+
+    let ev_conn = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("connected event");
+    assert!(
+        matches!(&ev_conn, ProviderEvent::Connected(name) if !name.is_empty()),
+        "unexpected event: {ev_conn:?}"
+    );
+    drop(reader);
+    drop(phone_stream);
+
+    stop.store(true, Ordering::Relaxed);
+    let _ = handle.join();
+    drop(occupied);
 }

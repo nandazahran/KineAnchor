@@ -22,7 +22,9 @@ Installers:
   - Architecture: x64
     InstallerType: wix
     InstallerUrl: https://github.com/nandazahran/KineAnchor/releases/download/v0.1.0/kineanchor-0.1.0-x86_64.msi
-    InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
+    # Placeholder until the MSI is built; release preparation replaces it with the real digest.
+    # Quoted so YAML keeps it a string instead of folding an all-zero value into an integer.
+    InstallerSha256: "0000000000000000000000000000000000000000000000000000000000000000"
     ProductCode: '{5B17C4E9-8F3B-447A-B102-83D126047474}'
 ManifestType: singleton
 ManifestVersion: 1.6.0
