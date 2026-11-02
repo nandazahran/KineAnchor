@@ -33,6 +33,9 @@ jobs:
           java-version: '17'
       - name: Install Android SDK and NDK r27c
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default "tools" package no longer exists upstream.
+          packages: platform-tools
       - run: sdkmanager "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
       - uses: dtolnay/rust-toolchain@1.85.0
         with:
