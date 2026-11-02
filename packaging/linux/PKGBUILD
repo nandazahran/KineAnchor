@@ -14,9 +14,7 @@ optdepends=(
 )
 # Released source tarball, not the caller's checkout.
 source=("https://github.com/nandazahran/KineAnchor/archive/refs/tags/v${pkgver}.tar.gz")
-# Placeholder until the v${pkgver} tag exists. Release preparation replaces it with
-# `sha256sum v${pkgver}.tar.gz`; makepkg --verifysource fails loudly until then.
-sha256sums=('0000000000000000000000000000000000000000000000000000000000000000')
+sha256sums=('0019dfc4b32d63c1392aa264aed2253c1e0c2fb09216f8e2cc269bbfb8bb49b5')
 
 prepare() {
   cd "${srcdir}/KineAnchor-${pkgver}"
@@ -25,19 +23,19 @@ prepare() {
 }
 
 build() {
-  cd "${srcdir}/KineAnchor-${pkgver}"
+  cd "${srcdir}/KineAnchor-v${pkgver}"
   export CARGO_TARGET_DIR="${srcdir}/target"
   cargo build --frozen --release -p kineanchor
 }
 
 check() {
-  cd "${srcdir}/KineAnchor-${pkgver}"
+  cd "${srcdir}/KineAnchor-v${pkgver}"
   export CARGO_TARGET_DIR="${srcdir}/target"
   cargo test --frozen --workspace
 }
 
 package() {
-  cd "${srcdir}/KineAnchor-${pkgver}"
+  cd "${srcdir}/KineAnchor-v${pkgver}"
   install -Dm755 "${srcdir}/target/release/kineanchor" "$pkgdir/usr/bin/kineanchor"
   install -Dm755 "packaging/linux/kineanchor-netsetup" "$pkgdir/usr/lib/kineanchor/kineanchor-netsetup"
   install -Dm644 "packaging/linux/90-kineanchor-tether.nmconnection" \
