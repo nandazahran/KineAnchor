@@ -1,33 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-<!-- Foreground: peripheral motion dots framing an empty centre, matching the overlay cue. -->
+<!-- Foreground: The Horizon Anchor with stabilized artificial horizon stock and peripheral cues. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Stabilized Artificial Horizon Wings (#4CB3F0) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M24,34 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#4CB3F0"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M39,50 L48,50" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M24,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#4CB3F0"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M60,50 L69,50" />
+
+    <!-- Anchor Fluke Arc & Ears (#FFFFFF) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M24,74 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M37.5,56.5 C37.5,65.5 44.75,72.5 54,72.5 C63.25,72.5 70.5,65.5 70.5,56.5" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M84,34 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.75"
+        android:strokeLineCap="round"
+        android:pathData="M37.5,56.5 L33.75,61" />
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M84,54 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.75"
+        android:strokeLineCap="round"
+        android:pathData="M70.5,56.5 L74.25,61" />
+
+    <!-- Vertical Gravity Shank (#FFFFFF) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M84,74 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M54,41.75 L54,73.5" />
+
+    <!-- Top Gyro Shackle Ring (#FFFFFF) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M44,24 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.5"
+        android:strokeLineCap="round"
+        android:pathData="M54,36.75m-4.75,0a4.75,4.75 0 1,0 9.5,0a4.75,4.75 0 1,0 -9.5,0" />
+
+    <!-- Inertial Gyro Center Dot (#4CB3F0) -->
     <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M64,24 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+        android:fillColor="#4CB3F0"
+        android:pathData="M54,36.75m-1.38,0a1.38,1.38 0 1,0 2.76,0a1.38,1.38 0 1,0 -2.76,0" />
+
+    <!-- Peripheral Motion Cue Dots (#4CB3F0) -->
+    <path
+        android:fillColor="#4CB3F0"
+        android:pathData="M31.75,50m-2.12,0a2.12,2.12 0 1,0 4.24,0a2.12,2.12 0 1,0 -4.24,0" />
+    <path
+        android:fillColor="#4CB3F0"
+        android:pathData="M76.25,50m-2.12,0a2.12,2.12 0 1,0 4.24,0a2.12,2.12 0 1,0 -4.24,0" />
 </vector>

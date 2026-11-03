@@ -1,6 +1,8 @@
-# KineAnchor
-
-FOSS cross-platform motion-sickness overlay (`GPL-3.0-or-later`) for **Linux (Wayland `wlr-layer-shell` + X11)**, **Windows**, and **Android**.
+<div align="center">
+  <img src="fastlane/metadata/android/en-US/images/icon.png" width="128" height="128" alt="KineAnchor logo" />
+  <h1>KineAnchor</h1>
+  <p>FOSS cross-platform motion-sickness overlay (<code>GPL-3.0-or-later</code>) for <strong>Linux (Wayland <code>wlr-layer-shell</code> + X11)</strong>, <strong>Windows</strong>, and <strong>Android</strong>.</p>
+</div>
 
 KineAnchor renders subtle, click-through peripheral dots that drift opposite to vehicle acceleration, braking, turning, heave, and roll so visual cues agree with vestibular signals (Apple Vehicle Motion Cues convention: accelerate = dots down, brake = dots up, turn left = dots right, turn right = dots left).
 
