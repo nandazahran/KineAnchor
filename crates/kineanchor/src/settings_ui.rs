@@ -309,10 +309,16 @@ impl SettingsApp {
 
                     ui.horizontal(|ui| {
                         if ui.button("Configure USB Tether & Firewall").clicked() {
-                            match Command::new("pkexec")
-                                .arg("/usr/lib/kineanchor/kineanchor-netsetup")
-                                .spawn()
-                            {
+                            let helper = std::env::var_os("APPDIR")
+                                .map(std::path::PathBuf::from)
+                                .map(|d| d.join("usr/lib/kineanchor/kineanchor-netsetup"))
+                                .filter(|p| p.is_file())
+                                .unwrap_or_else(|| {
+                                    std::path::PathBuf::from(
+                                        "/usr/lib/kineanchor/kineanchor-netsetup",
+                                    )
+                                });
+                            match Command::new("pkexec").arg(helper).spawn() {
                                 Ok(_) => {
                                     self.netsetup_status =
                                         Some("Launched polkit helper".to_string());

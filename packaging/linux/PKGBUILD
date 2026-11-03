@@ -1,6 +1,6 @@
 # Maintainer: Nanda Zahran <https://github.com/nandazahran>
 pkgname=kineanchor
-pkgver=0.1.0
+pkgver=0.1.1
 pkgrel=1
 pkgdesc="Cross-platform motion sickness overlay (Wayland wlr-layer-shell & X11)"
 arch=('x86_64' 'aarch64')
@@ -23,19 +23,19 @@ prepare() {
 }
 
 build() {
-  cd "${srcdir}/KineAnchor-v${pkgver}"
+  cd "${srcdir}/KineAnchor-${pkgver}"
   export CARGO_TARGET_DIR="${srcdir}/target"
   cargo build --frozen --release -p kineanchor
 }
 
 check() {
-  cd "${srcdir}/KineAnchor-v${pkgver}"
+  cd "${srcdir}/KineAnchor-${pkgver}"
   export CARGO_TARGET_DIR="${srcdir}/target"
   cargo test --frozen --workspace
 }
 
 package() {
-  cd "${srcdir}/KineAnchor-v${pkgver}"
+  cd "${srcdir}/KineAnchor-${pkgver}"
   install -Dm755 "${srcdir}/target/release/kineanchor" "$pkgdir/usr/bin/kineanchor"
   install -Dm755 "packaging/linux/kineanchor-netsetup" "$pkgdir/usr/lib/kineanchor/kineanchor-netsetup"
   install -Dm644 "packaging/linux/90-kineanchor-tether.nmconnection" \

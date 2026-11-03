@@ -43,8 +43,8 @@ jobs:
         run: |
           mkdir -p dist
           cp android/app/build/outputs/apk/release/app-release-unsigned.apk \
-             dist/kineanchor-0.1.0-universal-unsigned.apk
-          apk=dist/kineanchor-0.1.0-universal-unsigned.apk
+             dist/kineanchor-0.1.1-universal-unsigned.apk
+          apk=dist/kineanchor-0.1.1-universal-unsigned.apk
           for abi in arm64-v8a armeabi-v7a x86_64; do
             unzip -l "$apk" | grep -q "lib/$abi/libkineanchor_android_ffi.so" \
               || { echo "missing $abi native library"; exit 1; }
@@ -67,11 +67,11 @@ jobs:
         run: dotnet tool install --global wix --version 6.0.1
       - name: Build the MSI
         run: |
-          wix build packaging/windows/main.wxs -arch x64 -o kineanchor-0.1.0-x86_64.msi
+          wix build packaging/windows/main.wxs -arch x64 -o kineanchor-0.1.1-x86_64.msi
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: kineanchor-0.1.0-x86_64.msi
+          path: kineanchor-0.1.1-x86_64.msi
           if-no-files-found: error
 
   linux:
@@ -92,18 +92,24 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libwayland-dev libxkbcommon-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
+            desktop-file-utils file
       - run: cargo build --locked --release -p kineanchor
-      - name: Package with the license
+      - name: Package tarball and AppImage
         run: |
-          mkdir -p dist/kineanchor-0.1.0-${{ matrix.arch }}
-          cp target/release/kineanchor LICENSE dist/kineanchor-0.1.0-${{ matrix.arch }}/
-          tar -C dist -czf kineanchor-0.1.0-${{ matrix.arch }}-linux.tar.gz \
-            kineanchor-0.1.0-${{ matrix.arch }}
+          mkdir -p dist/kineanchor-0.1.1-${{ matrix.arch }}
+          cp target/release/kineanchor LICENSE dist/kineanchor-0.1.1-${{ matrix.arch }}/
+          tar -C dist -czf kineanchor-0.1.1-${{ matrix.arch }}-linux.tar.gz \
+            kineanchor-0.1.1-${{ matrix.arch }}
+          ./packaging/linux/build-appimage.sh "${{ matrix.arch }}" \
+            target/release/kineanchor \
+            "kineanchor-0.1.1-${{ matrix.arch }}.AppImage"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-${{ matrix.arch }}
-          path: kineanchor-0.1.0-${{ matrix.arch }}-linux.tar.gz
+          path: |
+            kineanchor-0.1.1-${{ matrix.arch }}-linux.tar.gz
+            kineanchor-0.1.1-${{ matrix.arch }}.AppImage
           if-no-files-found: error
 
   publish:
@@ -123,8 +129,9 @@ jobs:
       - name: Flatten and checksum
         run: |
           mkdir -p dist
-          find artifacts -type f \( -name '*.apk' -o -name '*.msi' -o -name '*.tar.gz' \) \
+          find artifacts -type f \( -name '*.apk' -o -name '*.msi' -o -name '*.tar.gz' -o -name '*.AppImage' \) \
             -exec cp {} dist/ \;
+          chmod +x dist/*.AppImage
           cd dist && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Create the release
         env:
@@ -132,4 +139,4 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "KineAnchor ${GITHUB_REF_NAME}" \
-            --notes "Unsigned 0.1.0 artifacts. Android APK is universal (arm64-v8a, armeabi-v7a, x86_64); the MSI is x86_64 and unsigned. Verify each file against SHA256SUMS.txt before installing."
+            --notes "Unsigned 0.1.1 artifacts. Android APK is universal (arm64-v8a, armeabi-v7a, x86_64); the MSI is x86_64 and unsigned; Linux includes portable .AppImage and .tar.gz for x86_64 and aarch64. Verify each file against SHA256SUMS.txt before installing."

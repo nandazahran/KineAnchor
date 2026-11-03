@@ -22,7 +22,7 @@ KineAnchor renders subtle, click-through peripheral dots that drift opposite to 
 - [`crates/kineanchor-android-ffi/`](crates/kineanchor-android-ffi): Zero-dependency C-ABI JNI bridge exposing `Engine` to the Android Kotlin shell.
 - [`android/`](android): Kotlin Android app supporting both on-phone click-through overlay (`OverlayService`, capped at `alpha <= 0.8` for Android 12+ untrusted-touch pass-through) and 50 Hz PC sensor puck streaming (`StreamService`).
 - [`packaging/`](packaging):
-  - [`packaging/linux/`](packaging/linux): `.desktop`, NetworkManager USB tether profile (`route-metric=2000`), Polkit helper (`kineanchor-netsetup`), `ufw`/`firewalld` service definitions, and Arch/CachyOS `PKGBUILD`.
+  - [`packaging/linux/`](packaging/linux): `.desktop`, AppImage builder (`build-appimage.sh`), NetworkManager USB tether profile (`route-metric=2000`), Polkit helper (`kineanchor-netsetup`), `ufw`/`firewalld` service definitions, and Arch/CachyOS `PKGBUILD`.
   - [`packaging/windows/`](packaging/windows): WiX MSI (`main.wxs`) and `winget` (`io.github.nandazahran.KineAnchor.yaml`) manifests.
   - [`packaging/fdroid/`](packaging/fdroid) & [`fastlane/`](fastlane): F-Droid build recipe and store metadata.
   - [`packaging/gnome-extension/`](packaging/gnome-extension): GNOME Shell 45–48 top-chrome overlay extension.
@@ -68,17 +68,19 @@ cargo run -p kineanchor --example replay_stream -- capture.ndjson
 `replay_stream` rejects malformed JSON, unsupported protocol versions, and lines over 1024 bytes
 with a line-numbered error, so a corrupt capture cannot be silently half-applied.
 
-## Installable artifacts (0.1.0)
+## Installable artifacts (0.1.1)
 
 | Artifact | Name |
 |---|---|
-| Android (universal: `arm64-v8a`, `armeabi-v7a`, `x86_64`) | `kineanchor-0.1.0-universal-unsigned.apk` |
-| Windows x86_64 (WiX MSI) | `kineanchor-0.1.0-x86_64.msi` |
-| Linux x86_64 | `kineanchor-0.1.0-x86_64-linux.tar.gz` |
-| Linux aarch64 | `kineanchor-0.1.0-aarch64-linux.tar.gz` |
+| Android (universal: `arm64-v8a`, `armeabi-v7a`, `x86_64`) | `kineanchor-0.1.1-universal-unsigned.apk` |
+| Windows x86_64 (WiX MSI) | `kineanchor-0.1.1-x86_64.msi` |
+| Linux x86_64 (AppImage) | `kineanchor-0.1.1-x86_64.AppImage` |
+| Linux aarch64 (AppImage) | `kineanchor-0.1.1-aarch64.AppImage` |
+| Linux x86_64 (tarball) | `kineanchor-0.1.1-x86_64-linux.tar.gz` |
+| Linux aarch64 (tarball) | `kineanchor-0.1.1-aarch64-linux.tar.gz` |
 | Checksums | `SHA256SUMS.txt` |
 
-**These 0.1.0 artifacts are unsigned.** The APK is not Play-signed and the MSI has no Authenticode
+**These 0.1.1 artifacts are unsigned.** The APK is not Play-signed and the MSI has no Authenticode
 signature, so Windows SmartScreen and Android install flows will warn. Verify each file against
 `SHA256SUMS.txt` from the same release before installing.
 

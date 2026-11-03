@@ -1,0 +1,3 @@
+Release 0.1.1:
+- Linux AppImage packaging (x86_64 and aarch64) alongside tarballs
+- Bundled polkit/NetworkManager helper path resolution inside AppImage

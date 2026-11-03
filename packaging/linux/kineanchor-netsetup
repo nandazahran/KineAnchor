@@ -3,7 +3,12 @@
 # Fixed root helper invoked via pkexec (no user arguments accepted).
 set -eu
 
-NM_SRC="/usr/share/kineanchor/90-kineanchor-tether.nmconnection"
+SELF_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+if [ -f "$SELF_DIR/../../share/kineanchor/90-kineanchor-tether.nmconnection" ]; then
+    NM_SRC="$SELF_DIR/../../share/kineanchor/90-kineanchor-tether.nmconnection"
+else
+    NM_SRC="/usr/share/kineanchor/90-kineanchor-tether.nmconnection"
+fi
 NM_DST="/etc/NetworkManager/system-connections/90-kineanchor-tether.nmconnection"
 
 if [ -f "$NM_SRC" ] && [ -d "/etc/NetworkManager/system-connections" ]; then
