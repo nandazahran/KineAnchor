@@ -1,6 +1,6 @@
 # projectmem - KineAnchor
 
-_Last updated: 2026-10-25_
+_Last updated: 2026-11-03_
 
 ## Project purpose
 Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wayland `wlr-layer-shell` + X11), Windows, and Android.
@@ -15,6 +15,7 @@ Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wa
 - Tether NM profile matches by driver (rndis_host;cdc_ncm;cdc_ether) and uses route-metric=2000 instead of ipv4.never-default. [docs/ARCHITECTURE.md]
 - Spike outcome: wayapp rejected (pins egui 0.35, forces tokio/hotpath, lacks multi-output and empty input region API). Use direct smithay-client-toolkit for Wayland layer-shell. [crates/kineanchor/src/]
 - Use zero-dependency C-ABI JNI functions with packed (f32, f32) jlong returns in kineanchor-android-ffi to avoid jni crate dependencies and JVM heap allocations at 60 fps [crates/kineanchor-android-ffi/src/lib.rs:1]
+- Linux releases ship portable x86_64 and aarch64 AppImages built with appimagetool (APPIMAGE_EXTRACT_AND_RUN=1) alongside tarballs; Settings UI resolves kineanchor-netsetup from $APPDIR when running inside an AppImage. [packaging/linux/build-appimage.sh]
 
 ## Notes
 - Initial commit
