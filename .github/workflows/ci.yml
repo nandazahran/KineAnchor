@@ -2,7 +2,18 @@ name: CI
 
 on:
   push:
+    # Docs-only changes cannot break the build; skip the matrix entirely.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
   pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
 
 permissions:
   contents: read
