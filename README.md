@@ -64,6 +64,7 @@ scan a `motion://` URI to dial the desktop instead.
 - [Architecture Specification](docs/ARCHITECTURE.md)
 - [Transport Protocol v1 (`NDJSON-TCP`)](docs/PROTOCOL.md)
 - [Roadmap & Risk Matrix](docs/ROADMAP.md)
+- [Privacy Policy](docs/PRIVACY.md) — no data collection, ever.
 
 ## Prior Art & References
 
