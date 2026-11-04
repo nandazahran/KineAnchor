@@ -17,27 +17,32 @@ KineAnchor renders subtle, click-through peripheral dots that drift opposite to 
   - **Ship**: 0.1–0.3 Hz wave band filter + roll rotation for ferries and vessels.
   - **Synthetic Sway**: ~0.2 Hz experimental synthetic wave generator (Diels & Howarth 2013 band) requiring no sensors.
 
-## Workspace Layout
+## Installation
 
-- [`crates/kineanchor-core/`](crates/kineanchor-core): Pure Rust core (no I/O, no UI) — types, NDJSON v1 protocol codec, 3D gravity calibration (`basis_from_gravity`), 2D PCA forward-axis auto-detection (`align_forward_pca`), spring-damper physics, edge-band dot field, and stream recorder/player.
-- [`crates/kineanchor/`](crates/kineanchor): Desktop binary and library — Wayland layer-shell overlay, X11/Windows `eframe` overlay, `NetProvider`, `IioProvider`, `ControllerProvider`, sysfs USB tether / charge-only cable hint, and `egui` settings + QR pairing UI.
-- [`crates/kineanchor-android-ffi/`](crates/kineanchor-android-ffi): Zero-dependency C-ABI JNI bridge exposing `Engine` to the Android Kotlin shell.
-- [`android/`](android): Kotlin Android app supporting both on-phone click-through overlay (`OverlayService`, capped at `alpha <= 0.8` for Android 12+ untrusted-touch pass-through) and 50 Hz PC sensor puck streaming (`StreamService`).
-- [`packaging/`](packaging):
-  - [`packaging/linux/`](packaging/linux): `.desktop`, AppImage builder (`build-appimage.sh`), NetworkManager USB tether profile (`route-metric=2000`), Polkit helper (`kineanchor-netsetup`), `ufw`/`firewalld` service definitions, and Arch/CachyOS `PKGBUILD`.
-  - [`packaging/windows/`](packaging/windows): WiX MSI (`main.wxs`) and `winget` (`io.github.nandazahran.KineAnchor.yaml`) manifests.
-  - [`packaging/fdroid/`](packaging/fdroid) & [`fastlane/`](fastlane): F-Droid build recipe and store metadata.
-  - [`packaging/gnome-extension/`](packaging/gnome-extension): GNOME Shell 45–48 top-chrome overlay extension.
+Download the prebuilt artifacts from the [releases page](https://github.com/nandazahran/KineAnchor/releases). No Rust toolchain is required.
 
-## Quick Start (Desktop)
+| Platform | Artifact |
+|---|---|
+| Android (universal: `arm64-v8a`, `armeabi-v7a`, `x86_64`) | `kineanchor-<version>-universal-unsigned.apk` |
+| Windows x86_64 (WiX MSI) | `kineanchor-<version>-x86_64.msi` |
+| Linux x86_64 (AppImage) | `kineanchor-<version>-x86_64.AppImage` |
+| Linux aarch64 (AppImage) | `kineanchor-<version>-aarch64.AppImage` |
+| Linux x86_64 (tarball) | `kineanchor-<version>-x86_64-linux.tar.gz` |
+| Linux aarch64 (tarball) | `kineanchor-<version>-aarch64-linux.tar.gz` |
+| Checksums | `SHA256SUMS.txt` |
 
-```bash
-# Build and run with settings + the click-through overlay
-cargo run --release -p kineanchor
+**Releases are unsigned.** The APK is not Play-signed and the MSI has no Authenticode signature,
+so Windows SmartScreen and Android install flows will warn. Verify each file against
+`SHA256SUMS.txt` from the same release before installing.
 
-# Overlay only, synthetic motion (no sensors, no UI)
-cargo run --release -p kineanchor -- --no-ui --synthetic
-```
+Android permissions requested: network access, foreground service (special use), wake lock,
+camera (QR pairing only), display over other apps, and notifications on Android 13+. Camera frames
+are decoded on-device and discarded; nothing is uploaded.
+
+Arch/CachyOS users can also build from the [`packaging/linux/PKGBUILD`](packaging/linux/PKGBUILD).
+Source builds, tests, and packaging are covered in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Usage
 
 ### Connection directions
 
@@ -54,42 +59,6 @@ desktop address. In tether mode no QR scan is needed.
 Android app: leave the URI field empty and tap *Pair & Start* to listen for the desktop; enter or
 scan a `motion://` URI to dial the desktop instead.
 
-### Developer tools
-
-```bash
-# Simulate a 50 Hz phone sensor stream over loopback
-cargo run -p kineanchor --example fake_phone -- --listen 127.0.0.1:47474
-
-# Record a live session to NDJSON (desktop dials the phone; uses the stored pairing token)
-cargo run -p kineanchor --example record_stream -- <phone-host>:47474 capture.ndjson
-
-# Replay a capture through the real engine and print the resulting status and dot offset
-cargo run -p kineanchor --example replay_stream -- capture.ndjson
-```
-
-`replay_stream` rejects malformed JSON, unsupported protocol versions, and lines over 1024 bytes
-with a line-numbered error, so a corrupt capture cannot be silently half-applied.
-
-## Installable artifacts (0.1.1)
-
-| Artifact | Name |
-|---|---|
-| Android (universal: `arm64-v8a`, `armeabi-v7a`, `x86_64`) | `kineanchor-0.1.1-universal-unsigned.apk` |
-| Windows x86_64 (WiX MSI) | `kineanchor-0.1.1-x86_64.msi` |
-| Linux x86_64 (AppImage) | `kineanchor-0.1.1-x86_64.AppImage` |
-| Linux aarch64 (AppImage) | `kineanchor-0.1.1-aarch64.AppImage` |
-| Linux x86_64 (tarball) | `kineanchor-0.1.1-x86_64-linux.tar.gz` |
-| Linux aarch64 (tarball) | `kineanchor-0.1.1-aarch64-linux.tar.gz` |
-| Checksums | `SHA256SUMS.txt` |
-
-**These 0.1.1 artifacts are unsigned.** The APK is not Play-signed and the MSI has no Authenticode
-signature, so Windows SmartScreen and Android install flows will warn. Verify each file against
-`SHA256SUMS.txt` from the same release before installing.
-
-Android permissions requested: network access, foreground service (special use), wake lock,
-camera (QR pairing only), display over other apps, and notifications on Android 13+. Camera frames
-are decoded on-device and discarded; nothing is uploaded.
-
 ## Documentation
 
 - [Architecture Specification](docs/ARCHITECTURE.md)
@@ -105,6 +74,11 @@ KineAnchor is an independent clean-room Rust/Kotlin implementation under `GPL-3.
 - [`smithynb/motion-cues`](https://github.com/smithynb/motion-cues) & [`Exudius/motionsick`](https://github.com/Exudius/motionsick) — Desktop motion cue prototypes.
 - Commercial / proprietary references: Apple Vehicle Motion Cues (iOS 18+), KineStop, EasyQueasy, MotionEase.
 - Diels, C., & Howarth, P. A. (2013). *Frequency characteristics of visually induced motion sickness (VIMS)*. Human Factors, 55(3), 595–604.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for building from source, the workspace layout, developer
+tools, and the checks CI runs.
 
 ## License
 
