@@ -87,7 +87,8 @@ impl Default for Config {
             density: 1.0,
             dot_radius_px: 6.0,
             opacity: 0.65,
-            color: [240, 240, 245, 255],
+            // Design cue-dot colour: "Horizon Data" #4CB3F0.
+            color: [76, 179, 240, 255],
             edge_band: 0.12,
             gain: 1.0,
             invert: [false, false, false],

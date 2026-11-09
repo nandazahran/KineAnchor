@@ -17,6 +17,11 @@ fn config_path() -> Option<PathBuf> {
     Some(config_dir()?.join("config.json"))
 }
 
+/// Path of the persisted settings file, for the About screen's "stored on this computer" box.
+pub fn config_file_path() -> Option<PathBuf> {
+    config_path()
+}
+
 fn pairing_path() -> Option<PathBuf> {
     Some(config_dir()?.join("pairing.json"))
 }

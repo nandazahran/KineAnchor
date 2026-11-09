@@ -360,6 +360,49 @@ mod tests {
     }
 
     #[test]
+    fn test_paused_freezes_cues_without_changing_status() {
+        let config = Config {
+            source: Source::Synthetic,
+            ..Default::default()
+        };
+        let mut engine = Engine::new(config);
+        engine.set_paused(true);
+        let viewport = [800.0, 600.0];
+        let (dx, dy, roll) = engine.current_offset();
+        assert_eq!((dx, dy, roll), (0.0, 0.0, 0.0));
+
+        let static_positions: Vec<(f32, f32)> = engine
+            .tick(0.0, viewport)
+            .0
+            .iter()
+            .map(|d| (d.x, d.y))
+            .collect();
+        assert!(
+            !static_positions.is_empty(),
+            "paused field must still paint"
+        );
+
+        let (dots, status) = engine.tick(1.0, viewport);
+        assert!(matches!(status, Status::Synthetic));
+        let later: Vec<(f32, f32)> = dots.iter().map(|d| (d.x, d.y)).collect();
+        assert_eq!(static_positions, later, "paused dots must not move");
+        assert_eq!(engine.current_offset(), (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn test_config_ignores_removed_transport_keys() {
+        // Config files written by the interim build carried `net_enabled`/`paused`.
+        let legacy = r#"{"vehicle":"car","source":"sensor","density":1.0,
+            "dot_radius_px":6.0,"opacity":0.65,"color":[76,179,240,255],
+            "edge_band":0.12,"gain":1.0,"invert":[false,false,false],
+            "synthetic":{"freq_hz":0.2,"amplitude":0.15,"roll_amplitude":0.05},
+            "net_mode":"dial_phone","net_enabled":false,"paused":true}"#;
+        let cfg: Config = serde_json::from_str(legacy).expect("legacy config must load");
+        assert_eq!(cfg.net_mode, NetMode::DialPhone);
+        assert_eq!(cfg.source, Source::Sensor);
+    }
+
+    #[test]
     fn test_config_serde_json() {
         let config = Config::default();
         let serialized = serde_json::to_string(&config).expect("Serialize config failed");

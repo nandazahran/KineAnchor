@@ -2,6 +2,7 @@
 
 pub mod config_store;
 pub mod controller_provider;
+pub mod design;
 pub mod iio_provider;
 pub mod net_provider;
 pub mod provider;

@@ -18,6 +18,7 @@ Peripheral dots drift against vehicle motion so visual input agrees with the ves
 
 Decision:
 - **egui** for desktop settings UI (normal eframe window) and as the shared **dot painter** (`egui::Painter::circle_filled`) on every desktop overlay backend.
+  - The settings window is a 1:1 transcription of the Penpot file "KineAnchor UI/UX: Desktop, Android & Overlay": Simple/Advanced modes, About & privacy, Licenses & credits. Tokens (palette, radii, type scale, control geometry) live in `crates/kineanchor/src/design.rs`; screen composition in `settings_ui.rs`. Dark is the primary theme, light mirrors the same tokens; IBM Plex Sans 400/500/600 + Plex Mono are bundled under `crates/kineanchor/assets/fonts` (OFL-1.1).
 - **Linux Wayland overlay**: SCTK layer surface + `egui` + `egui-wgpu` (no winit). The overlay takes no input, so no input translation is needed and glue stays small.
 - **Android**: **Kotlin shell + Rust core via JNI**, not eframe. Reason: an overlay must be a `View` added by `WindowManager.addView(TYPE_APPLICATION_OVERLAY)` from a foreground Service. android-activity/winit binds to the Activity's `ANativeWindow` and has no path to that. Drawing ~100 circles on an Android `Canvas` is trivial, so wgpu on Android is not needed.
 - GPUI rejected: no advantage on any target, more risk on all of them.
@@ -108,7 +109,8 @@ pub enum Source  { Sensor, Synthetic }          // "manual" = Synthetic with use
 pub struct Config { pub vehicle: Vehicle, pub source: Source,
                     pub density: f32, pub dot_radius_px: f32, pub opacity: f32,
                     pub color: [u8; 4], pub edge_band: f32, pub gain: f32,
-                    pub invert: [bool; 3], pub synthetic: SyntheticParams, /* ... */ }
+                    pub invert: [bool; 3], pub synthetic: SyntheticParams,
+                    pub net_mode: NetMode }
 
 pub struct Dot { pub x: f32, pub y: f32, pub r: f32, pub alpha: f32 }
 pub enum Status { Live { rate_hz: f32 }, Stale { since: f64 }, Synthetic, Calibrating }
@@ -120,6 +122,8 @@ impl Engine {
     pub fn push(&mut self, s: MotionSample, arrival: f64); // any thread feeds via channel; engine is single-owner
     pub fn zero(&mut self);                                 // capture rest gravity + bias
     pub fn tick(&mut self, now: f64, viewport: [f32; 2]) -> (&[Dot], Status);
+    pub fn set_paused(&mut self, paused: bool); // runtime-only, never persisted
+    pub fn is_paused(&self) -> bool;
 }
 ```
 

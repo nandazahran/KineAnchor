@@ -12,6 +12,9 @@ pub struct Engine {
     last_sample: Option<MotionSample>,
     last_tick_time: Option<f64>,
     last_stale_blend: f32,
+    /// Runtime-only pause: holds the dot field at the zero reference while providers keep
+    /// running. Never persisted, so a restart always resumes with live cues.
+    paused: bool,
 }
 
 impl Default for Engine {
@@ -29,6 +32,7 @@ impl Engine {
             last_sample: None,
             last_tick_time: None,
             last_stale_blend: 0.0,
+            paused: false,
         }
     }
 
@@ -38,6 +42,14 @@ impl Engine {
 
     pub fn config(&self) -> &Config {
         &self.config
+    }
+
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 
     pub fn push(&mut self, sample: MotionSample, arrival: f64) {
@@ -75,6 +87,14 @@ impl Engine {
             None => 1.0 / 60.0,
         };
         self.last_tick_time = Some(now);
+
+        if self.paused {
+            // Paused means a static reference: no displacement, no roll, no synthetic wave.
+            self.last_stale_blend = 0.0;
+            let status = self.status(now);
+            let dots = self.dot_field.update(viewport, 0.0, 0.0, 0.0, &self.config);
+            return (dots, status);
+        }
 
         let (dx, dy, roll, status) = match self.config.source {
             Source::Synthetic => {

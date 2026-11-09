@@ -287,7 +287,7 @@ pub fn handle_session(
 
     let _ = stream.set_read_timeout(Some(Duration::from_millis(600)));
 
-    // 3. Stream samples until EOF, error, or stop
+    // 3. Stream samples until EOF, error, or stop.
     while !stop.load(Ordering::Relaxed) {
         match read_bounded_line(&mut reader, &mut line) {
             Ok(0) => break, // EOF
