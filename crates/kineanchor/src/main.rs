@@ -172,7 +172,7 @@ fn run_settings(
 ) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 620.0])
+            .with_inner_size([480.0, 580.0])
             .with_min_inner_size([420.0, 520.0])
             .with_title("KineAnchor Settings"),
         ..Default::default()

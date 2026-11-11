@@ -1207,8 +1207,7 @@ impl SettingsApp {
                 "Pause cues"
             }];
             if design::toggles(ui, p, "overlay-power", &labels, &mut dev_toggles, &[true]) {
-                self.paused = !dev_toggles[0];
-                self.dirty = true;
+                self.set_paused(!dev_toggles[0]);
             }
             ui.horizontal(|ui| {
                 if design::activated(&btn(
