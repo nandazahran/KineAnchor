@@ -302,50 +302,26 @@ pub fn pill(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) {
 
 fn draw_anchor(painter: &egui::Painter, rect: Rect, p: &Palette) {
     let c = rect.center();
-    let s = rect.width() / 24.0;
-    let white = Stroke::new((2.0 * s).max(1.2), p.ink);
-    let accent = Stroke::new((2.0 * s).max(1.2), p.accent);
-
-    painter.line_segment(
-        [Pos2::new(c.x, c.y - 8.0 * s), Pos2::new(c.x, c.y + 6.0 * s)],
-        white,
-    );
-    painter.circle_stroke(Pos2::new(c.x, c.y - 9.0 * s), 2.0 * s, white);
-    painter.line_segment(
-        [Pos2::new(c.x - 6.0 * s, c.y), Pos2::new(c.x - 3.0 * s, c.y)],
-        accent,
-    );
-    painter.line_segment(
-        [Pos2::new(c.x + 3.0 * s, c.y), Pos2::new(c.x + 6.0 * s, c.y)],
-        accent,
-    );
-    painter.circle_filled(Pos2::new(c.x - 5.0 * s, c.y), 1.6 * s, p.accent);
-    painter.circle_filled(Pos2::new(c.x + 5.0 * s, c.y), 1.6 * s, p.accent);
-
-    // Fluke arc (smile) plus the two ears.
-    let mut points = Vec::with_capacity(18);
-    for i in 0..=16 {
-        let t = i as f32 / 16.0;
-        let angle = std::f32::consts::PI * (0.15 + 0.70 * t);
-        points.push(Pos2::new(
-            c.x - (8.0 * s) * angle.cos(),
-            c.y + 6.0 * s - (4.0 * s) * angle.sin(),
-        ));
+    let s = rect.width() / 464.0;
+    let dot_r = (24.0 * s).max(1.5);
+    for (dx, dy) in [
+        (-112.0, -88.0),
+        (112.0, -88.0),
+        (-112.0, 88.0),
+        (112.0, 88.0),
+    ] {
+        painter.circle_filled(Pos2::new(c.x + dx * s, c.y + dy * s), dot_r, p.ink);
     }
-    painter.add(egui::Shape::line(points, white));
-    painter.line_segment(
-        [
-            Pos2::new(c.x - 7.4 * s, c.y + 2.0 * s),
-            Pos2::new(c.x - 6.4 * s, c.y - 0.5 * s),
-        ],
-        white,
-    );
-    painter.line_segment(
-        [
-            Pos2::new(c.x + 7.4 * s, c.y + 2.0 * s),
-            Pos2::new(c.x + 6.4 * s, c.y - 0.5 * s),
-        ],
-        white,
+
+    let pill = Rect::from_center_size(c, Vec2::new(144.0 * s, 40.0 * s));
+    let fill = Color32::from_rgba_unmultiplied(p.accent.r(), p.accent.g(), p.accent.b(), 51);
+    let stroke = Stroke::new((14.0 * s).max(1.2), p.accent);
+    painter.rect(
+        pill,
+        CornerRadius::same((20.0 * s).round().max(1.0) as u8),
+        fill,
+        stroke,
+        StrokeKind::Middle,
     );
 }
 
