@@ -1,6 +1,6 @@
 # projectmem - KineAnchor
 
-_Last updated: 2026-11-04_
+_Last updated: 2026-11-19_
 
 ## Project purpose
 Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wayland `wlr-layer-shell` + X11), Windows, and Android.
@@ -18,6 +18,8 @@ Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wa
 - Use zero-dependency C-ABI JNI functions with packed (f32, f32) jlong returns in kineanchor-android-ffi to avoid jni crate dependencies and JVM heap allocations at 60 fps [crates/kineanchor-android-ffi/src/lib.rs:1]
 - Linux releases ship portable x86_64 and aarch64 AppImages built with appimagetool (APPIMAGE_EXTRACT_AND_RUN=1) alongside tarballs; Settings UI resolves kineanchor-netsetup from $APPDIR when running inside an AppImage. [packaging/linux/build-appimage.sh]
 - Release workflow derives artifact version from Cargo.toml [workspace.package] version and the publish job fails when the pushed tag does not match it; version is no longer hardcoded in release.yml [.github/workflows/release.yml:134]
+- Block crates.io publishing via publish = false on all workspace crates and mark GitHub releases --prerelease in release.yml until the app is ready for external package managers/stores. [.github/workflows/release.yml:155]
+- Promote Peripheral Field logo (4 #F2F3F5 peripheral cue dots + 1 #38BDF8 20%-tinted horizon capsule on clean #111214/#27292E squircle, matching IncusCubby family without inner circle or corner dot) across Doop, Android adaptive icon, Fastlane/AppImage icon.png, and desktop egui design.rs. [crates/kineanchor/src/design.rs]
 
 ## Notes
 - Initial commit
@@ -40,6 +42,9 @@ Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wa
 - `workspace.package`
 - `release.yml`
 - `SHA256SUMS.txt`
+- `crates.io`
+- `icon.png`
+- `design.rs`
 
 ## Open questions
 - None logged yet.

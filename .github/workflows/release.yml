@@ -154,5 +154,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
+            --prerelease \
             --title "KineAnchor ${GITHUB_REF_NAME}" \
-            --notes "Unsigned ${GITHUB_REF_NAME#v} artifacts. Android APK is universal (arm64-v8a, armeabi-v7a, x86_64); the MSI is x86_64 and unsigned; Linux includes portable .AppImage and .tar.gz for x86_64 and aarch64. Verify each file against SHA256SUMS.txt before installing."
+            --notes "Pre-release unsigned ${GITHUB_REF_NAME#v} artifacts. Android APK is universal (arm64-v8a, armeabi-v7a, x86_64); the MSI is x86_64 and unsigned; Linux includes portable .AppImage and .tar.gz for x86_64 and aarch64. Verify each file against SHA256SUMS.txt before installing."

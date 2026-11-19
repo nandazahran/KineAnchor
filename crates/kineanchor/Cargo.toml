@@ -1,6 +1,7 @@
 [package]
 name = "kineanchor"
 description = "Motion sickness overlay for Linux (Wayland layer-shell, X11) and Windows."
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "kineanchor-core"
 description = "Platform-independent motion cue engine: providers in, dot field out. No I/O, no UI."
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,6 +1,7 @@
 [package]
 name = "kineanchor-android-ffi"
 description = "JNI bridge exposing kineanchor-core to the Android Kotlin shell."
+publish = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
