@@ -373,7 +373,7 @@ class OverlayService : Service(), SensorEventListener, Choreographer.FrameCallba
 
             val nowSec = SystemClock.elapsedRealtimeNanos() / 1_000_000_000.0
             val count = NativeEngine.nativeTick(ptr, nowSec, width.toFloat(), height.toFloat())
-            val statusCode = NativeEngine.nativeGetStatus(ptr)
+            val statusCode = NativeEngine.nativeGetStatus(ptr, nowSec)
             var sumDx = 0f
             var sumDy = 0f
             val cx = width * 0.5f

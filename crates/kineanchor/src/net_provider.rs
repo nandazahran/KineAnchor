@@ -258,7 +258,7 @@ pub fn handle_session(
         }
     };
 
-        let (issued_token, desktop_name, newly_paired) = match auth_result {
+    let (issued_token, desktop_name, newly_paired) = match auth_result {
         Ok(v) => {
             auth.lock().unwrap().last_reject_reason = None;
             v

@@ -280,8 +280,8 @@ impl SettingsApp {
             self.last_probe = Instant::now();
             self.cable_hint = probe_cable_hint();
             self.udev_denied_dev = probe_udev_denied();
-            self.local_imu = IioProvider::new().is_available()
-                || ControllerProvider::new().is_available();
+            self.local_imu =
+                IioProvider::new().is_available() || ControllerProvider::new().is_available();
         }
 
         let now = crate::monotonic_secs();
@@ -477,14 +477,7 @@ impl SettingsApp {
                         .color(p.body),
                 );
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    if activated(&icon_btn(
-                        ui,
-                        p,
-                        Icon::Back,
-                        Kind::Secondary,
-                        28.0,
-                        "Back",
-                    )) {
+                    if activated(&icon_btn(ui, p, Icon::Back, Kind::Secondary, 28.0, "Back")) {
                         self.confirm_revoke = false;
                         self.screen = Screen::Settings;
                     }
@@ -804,14 +797,7 @@ impl SettingsApp {
                         )) {
                             self.refresh_qr(true);
                         }
-                        if activated(&icon_btn(
-                            ui,
-                            p,
-                            Icon::Back,
-                            Kind::Secondary,
-                            28.0,
-                            "Done",
-                        )) {
+                        if activated(&icon_btn(ui, p, Icon::Back, Kind::Secondary, 28.0, "Done")) {
                             self.show_qr = false;
                         }
                     });
@@ -826,17 +812,17 @@ impl SettingsApp {
             ui.horizontal(|ui| {
                 design::glyph(ui, Icon::Usb, 14.0, p.body);
                 design::label(ui, p, "USB tether");
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    match &self.cable_hint {
-                        CableHint::TetherActive { .. } => {
-                            status_dot(ui, p, "Active", p.success_fg, p.body);
-                        }
-                        CableHint::UsbPluggedNoTether { .. } => {
-                            status_dot(ui, p, "Tether off", p.warn_fg, p.warn_fg);
-                        }
-                        CableHint::NoUsbPhone => {
-                            status_dot(ui, p, "Waiting", p.muted, p.body);
-                        }
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| match &self
+                    .cable_hint
+                {
+                    CableHint::TetherActive { .. } => {
+                        status_dot(ui, p, "Active", p.success_fg, p.body);
+                    }
+                    CableHint::UsbPluggedNoTether { .. } => {
+                        status_dot(ui, p, "Tether off", p.warn_fg, p.warn_fg);
+                    }
+                    CableHint::NoUsbPhone => {
+                        status_dot(ui, p, "Waiting", p.muted, p.body);
                     }
                 });
             });
@@ -940,8 +926,16 @@ impl SettingsApp {
                         ui,
                         p,
                         Vec2::new(scope_w, 158.0),
-                        if paused { 0.0 } else { offset.0.clamp(-24.0, 24.0) },
-                        if paused { 0.0 } else { offset.1.clamp(-24.0, 24.0) },
+                        if paused {
+                            0.0
+                        } else {
+                            offset.0.clamp(-24.0, 24.0)
+                        },
+                        if paused {
+                            0.0
+                        } else {
+                            offset.1.clamp(-24.0, 24.0)
+                        },
                         if paused { 0.0 } else { offset.2 },
                         true,
                         scope_state,
@@ -1044,7 +1038,12 @@ impl SettingsApp {
                 &SOURCES,
                 current,
                 SegStyle::card(),
-                &[false, false, !self.local_imu && self.udev_denied_dev.is_none(), false],
+                &[
+                    false,
+                    false,
+                    !self.local_imu && self.udev_denied_dev.is_none(),
+                    false,
+                ],
             ) {
                 if i != current {
                     self.select_source(i);
@@ -1176,14 +1175,28 @@ impl SettingsApp {
                     ui.allocate_ui(Vec2::new(box_w, 30.0), |ui| {
                         design::value_box(ui, p, 30.0, |ui| design::mono(ui, p, &self.qr_uri));
                     });
-                    if activated(&icon_btn(ui, p, Icon::QrCode, Kind::Secondary, 28.0, "QR code")) {
+                    if activated(&icon_btn(
+                        ui,
+                        p,
+                        Icon::QrCode,
+                        Kind::Secondary,
+                        28.0,
+                        "QR code",
+                    )) {
                         self.show_qr = !self.show_qr;
                         if self.show_qr {
                             self.refresh_qr(false);
                             self.mode = 0;
                         }
                     }
-                    if activated(&icon_btn(ui, p, Icon::Copy, Kind::Secondary, 28.0, "Copy URI")) {
+                    if activated(&icon_btn(
+                        ui,
+                        p,
+                        Icon::Copy,
+                        Kind::Secondary,
+                        28.0,
+                        "Copy URI",
+                    )) {
                         ctx.copy_text(self.qr_uri.clone());
                     }
                 });
@@ -1215,7 +1228,11 @@ impl SettingsApp {
         // 3. Filter & cues
         band_last(ui, p.card, Margin::symmetric(18, 14), |ui| {
             design::section(ui, p, "Filter & cues");
-            let mapping = if self.config.vehicle == Vehicle::Ship { 1 } else { 0 };
+            let mapping = if self.config.vehicle == Vehicle::Ship {
+                1
+            } else {
+                0
+            };
             if let Some(i) = segmented(ui, p, "mapping", &MAPPINGS, mapping, SegStyle::card()) {
                 self.config.vehicle = if i == 1 { Vehicle::Ship } else { Vehicle::Car };
                 self.dirty = true;
@@ -1677,8 +1694,7 @@ impl SettingsApp {
 }
 
 fn probe_udev_denied() -> Option<String> {
-    ControllerProvider::permission_denied_device()
-        .or_else(IioProvider::permission_denied_device)
+    ControllerProvider::permission_denied_device().or_else(IioProvider::permission_denied_device)
 }
 
 fn visibility_label(opacity: f32) -> &'static str {

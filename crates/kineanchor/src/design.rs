@@ -262,7 +262,13 @@ pub fn mono(ui: &mut Ui, p: &Palette, text: &str) {
 // ---------------------------------------------------------------------------
 
 /// Flat section container (`fill` + `1px` bottom hairline) replacing nested rounded cards.
-pub fn band<R>(ui: &mut Ui, p: &Palette, fill: Color32, pad: Margin, add: impl FnOnce(&mut Ui) -> R) -> R {
+pub fn band<R>(
+    ui: &mut Ui,
+    p: &Palette,
+    fill: Color32,
+    pad: Margin,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
     let inner = egui::Frame::new()
         .fill(fill)
         .inner_margin(pad)
@@ -277,12 +283,7 @@ pub fn band<R>(ui: &mut Ui, p: &Palette, fill: Color32, pad: Margin, add: impl F
 }
 
 /// Flush surface section (no bottom divider, used for the final panel region).
-pub fn band_last<R>(
-    ui: &mut Ui,
-    fill: Color32,
-    pad: Margin,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> R {
+pub fn band_last<R>(ui: &mut Ui, fill: Color32, pad: Margin, add: impl FnOnce(&mut Ui) -> R) -> R {
     egui::Frame::new()
         .fill(fill)
         .inner_margin(pad)
@@ -303,11 +304,17 @@ pub fn divider(ui: &mut Ui, p: &Palette) {
 /// Quiet 6 px status dot + label (`V2StatusDot`), replacing neon pill badges.
 pub fn status_dot(ui: &mut Ui, p: &Palette, text: &str, dot_color: Color32, text_color: Color32) {
     let font = FontId::new(12.0, FontFamily::Proportional);
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, text_color);
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, text_color);
     let size = Vec2::new(6.0 + 6.0 + galley.size().x, 20.0);
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter();
-    painter.circle_filled(Pos2::new(rect.left() + 3.0, rect.center().y), 3.0, dot_color);
+    painter.circle_filled(
+        Pos2::new(rect.left() + 3.0, rect.center().y),
+        3.0,
+        dot_color,
+    );
     painter.galley(
         Pos2::new(rect.left() + 12.0, rect.center().y - galley.size().y * 0.5),
         galley,
@@ -492,7 +499,11 @@ fn draw_icon(painter: &egui::Painter, center: Pos2, size: f32, icon: Icon, color
         }
         Icon::Play => {
             let tri = vec![pt(-0.42, -0.58), pt(0.62, 0.0), pt(-0.42, 0.58)];
-            painter.add(egui::Shape::convex_polygon(tri, Color32::TRANSPARENT, stroke));
+            painter.add(egui::Shape::convex_polygon(
+                tri,
+                Color32::TRANSPARENT,
+                stroke,
+            ));
         }
         Icon::Pause => {
             painter.rect_stroke(
@@ -588,7 +599,12 @@ fn draw_icon(painter: &egui::Painter, center: Pos2, size: f32, icon: Icon, color
         }
         Icon::Layers => {
             painter.add(egui::Shape::closed_line(
-                vec![pt(0.0, -0.68), pt(0.72, -0.25), pt(0.0, 0.18), pt(-0.72, -0.25)],
+                vec![
+                    pt(0.0, -0.68),
+                    pt(0.72, -0.25),
+                    pt(0.0, 0.18),
+                    pt(-0.72, -0.25),
+                ],
                 stroke,
             ));
             painter.line_segment([pt(-0.72, 0.2), pt(0.0, 0.62)], stroke);
@@ -735,10 +751,19 @@ pub fn action_btn(
     let content_w = icon_space + galley.size().x;
     let start_x = rect.center().x - content_w * 0.5;
     if let Some(ic) = icon {
-        draw_icon(painter, Pos2::new(start_x + 7.0, rect.center().y), 13.5, ic, fg);
+        draw_icon(
+            painter,
+            Pos2::new(start_x + 7.0, rect.center().y),
+            13.5,
+            ic,
+            fg,
+        );
     }
     painter.galley(
-        Pos2::new(start_x + icon_space, rect.center().y - galley.size().y * 0.5),
+        Pos2::new(
+            start_x + icon_space,
+            rect.center().y - galley.size().y * 0.5,
+        ),
         galley,
         fg,
     );
@@ -1311,7 +1336,10 @@ pub fn horizon_scope(
     let mut gx = rect.left() + 40.0;
     while gx < rect.right() {
         painter.line_segment(
-            [Pos2::new(gx, rect.top() + 1.0), Pos2::new(gx, rect.bottom() - 1.0)],
+            [
+                Pos2::new(gx, rect.top() + 1.0),
+                Pos2::new(gx, rect.bottom() - 1.0),
+            ],
             grid_stroke,
         );
         gx += 40.0;
@@ -1319,7 +1347,10 @@ pub fn horizon_scope(
     let mut gy = rect.top() + 40.0;
     while gy < rect.bottom() {
         painter.line_segment(
-            [Pos2::new(rect.left() + 1.0, gy), Pos2::new(rect.right() - 1.0, gy)],
+            [
+                Pos2::new(rect.left() + 1.0, gy),
+                Pos2::new(rect.right() - 1.0, gy),
+            ],
             grid_stroke,
         );
         gy += 40.0;
