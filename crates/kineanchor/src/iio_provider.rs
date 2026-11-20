@@ -33,6 +33,22 @@ impl IioProvider {
         self.device_dir.is_some()
     }
 
+    /// Returns the first IIO accel sysfs path that exists but fails with `PermissionDenied`.
+    pub fn permission_denied_device() -> Option<String> {
+        let entries = fs::read_dir("/sys/bus/iio/devices").ok()?;
+        for entry in entries.flatten() {
+            let accel = entry.path().join("in_accel_x_raw");
+            if accel.exists() {
+                if let Err(err) = fs::read_to_string(&accel) {
+                    if err.kind() == std::io::ErrorKind::PermissionDenied {
+                        return Some(accel.display().to_string());
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn discover_iio_accel() -> Option<PathBuf> {
         let entries = fs::read_dir("/sys/bus/iio/devices").ok()?;
         for entry in entries.flatten() {

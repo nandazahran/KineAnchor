@@ -27,6 +27,16 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class StreamService : Service(), SensorEventListener {
+    sealed class StreamState {
+        data object Idle : StreamState()
+        data class Listening(val port: Int) : StreamState()
+        data class Connecting(val host: String, val port: Int) : StreamState()
+        data class Streaming(val peerName: String?, val endpoint: String) : StreamState()
+        data class Rejected(val reason: String) : StreamState()
+        data class BindError(val message: String) : StreamState()
+        data class Disconnected(val reason: String) : StreamState()
+    }
+
     private val running = AtomicBoolean(false)
     private val sampleQueue = LinkedBlockingQueue<Protocol.Message.Sample>(8)
     private var sensorManager: SensorManager? = null
@@ -49,6 +59,7 @@ class StreamService : Service(), SensorEventListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            state = StreamState.Idle
             stopSelf()
             return START_NOT_STICKY
         }
@@ -64,6 +75,11 @@ class StreamService : Service(), SensorEventListener {
         val targetPort = intent?.getIntExtra(EXTRA_PORT, Protocol.DEFAULT_PORT) ?: Protocol.DEFAULT_PORT
         val pairSecret = intent?.getStringExtra(EXTRA_PAIR_SECRET)
 
+        state = if (targetHost == null) {
+            StreamState.Listening(targetPort)
+        } else {
+            StreamState.Connecting(targetHost, targetPort)
+        }
         startForegroundNotification()
 
         if (running.compareAndSet(false, true)) {
@@ -124,6 +140,9 @@ class StreamService : Service(), SensorEventListener {
         wakeLock?.let { if (it.isHeld) it.release() }
         wakeLock = null
         super.onDestroy()
+        if (state !is StreamState.Rejected && state !is StreamState.BindError) {
+            state = StreamState.Idle
+        }
     }
 
     private fun startForegroundNotification() {
@@ -212,6 +231,7 @@ class StreamService : Service(), SensorEventListener {
 
         // Exactly one direction per session: a scanned host means the phone dials the desktop,
         // no host means the phone listens for the desktop. Never both.
+        var bindErrorMsg: String? = null
         val server = if (targetHost == null) {
             runCatching {
                 ServerSocket().apply {
@@ -219,19 +239,28 @@ class StreamService : Service(), SensorEventListener {
                     bind(InetSocketAddress(port))
                     soTimeout = 500
                 }
+            }.onFailure { err ->
+                bindErrorMsg = err.message ?: "Could not bind TCP port $port"
             }.getOrNull()
         } else {
             null
         }
 
         if (targetHost == null && server == null) {
+            state = StreamState.BindError(bindErrorMsg ?: "Port $port unavailable")
             running.set(false)
+            stopSelf()
             return
         }
         serverSocket = server
 
         try {
             while (running.get() && generation == sessionGeneration) {
+                if (server != null) {
+                    state = StreamState.Listening(port)
+                } else if (targetHost != null) {
+                    state = StreamState.Connecting(targetHost, port)
+                }
                 val sock: Socket? = if (server != null) {
                     runCatching { server.accept() }.getOrNull()
                 } else {
@@ -295,13 +324,36 @@ class StreamService : Service(), SensorEventListener {
         writer.write(Protocol.encode(hello))
         writer.flush()
 
-        val welcomeLine = runCatching { reader.readLine() }.getOrNull() ?: return
-        val welcome = Protocol.decode(welcomeLine) as? Protocol.Message.Welcome ?: return
-
-        prefs.edit()
-            .putString("paired_token", welcome.token)
-            .putString("paired_desktop", welcome.name)
-            .apply()
+        val welcomeLine = runCatching { reader.readLine() }.getOrNull()
+        if (welcomeLine == null) {
+            state = StreamState.Disconnected("Desktop closed connection before handshake.")
+            return
+        }
+        val response = Protocol.decode(welcomeLine)
+        when (response) {
+            is Protocol.Message.Welcome -> {
+                prefs.edit()
+                    .putString("paired_token", response.token)
+                    .putString("paired_desktop", response.name)
+                    .apply()
+                val endpoint = "${sock.inetAddress?.hostAddress ?: "peer"}:${sock.port}"
+                state = StreamState.Streaming(response.name, endpoint)
+            }
+            is Protocol.Message.Reject -> {
+                // Clear stale token if we attempted token auth without a fresh pair secret.
+                if (pairSecret == null) {
+                    prefs.edit().remove("paired_token").apply()
+                }
+                state = StreamState.Rejected(response.reason)
+                running.set(false)
+                stopSelf()
+                return
+            }
+            else -> {
+                state = StreamState.Disconnected("Unexpected protocol response from desktop.")
+                return
+            }
+        }
 
         // Detects peer loss; closing here ends the writer loop on the next flush.
         val watchdog = Thread {
@@ -346,5 +398,9 @@ class StreamService : Service(), SensorEventListener {
         const val EXTRA_HOST = "host"
         const val EXTRA_PORT = "port"
         const val EXTRA_PAIR_SECRET = "pair_secret"
+
+        @Volatile
+        var state: StreamState = StreamState.Idle
+            private set
     }
 }

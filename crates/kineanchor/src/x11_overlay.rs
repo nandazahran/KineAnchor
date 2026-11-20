@@ -78,14 +78,35 @@ impl DesktopApp {
         no_ui: bool,
         own_overlay: bool,
     ) -> Self {
+        Self::with_overlay_fallback(
+            engine,
+            auth,
+            connected_device,
+            running,
+            shutdown,
+            no_ui,
+            own_overlay,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_overlay_fallback(
+        engine: Arc<Mutex<Engine>>,
+        auth: Arc<Mutex<AuthState>>,
+        connected_device: Arc<Mutex<Option<String>>>,
+        running: Arc<AtomicBool>,
+        shutdown: Arc<AtomicBool>,
+        no_ui: bool,
+        own_overlay: bool,
+        overlay_fallback: Option<String>,
+    ) -> Self {
         let settings = if no_ui {
             None
         } else {
-            Some(SettingsApp::new(
-                engine.clone(),
-                auth.clone(),
-                connected_device,
-            ))
+            let mut app = SettingsApp::new(engine.clone(), auth.clone(), connected_device);
+            app.set_overlay_fallback(overlay_fallback);
+            Some(app)
         };
         Self {
             engine,
@@ -161,13 +182,33 @@ pub fn run_desktop(
     shutdown: Arc<AtomicBool>,
     no_ui: bool,
 ) -> Result<(), String> {
+    run_desktop_with_fallback(
+        engine,
+        auth,
+        connected_device,
+        running,
+        shutdown,
+        no_ui,
+        None,
+    )
+}
+
+pub fn run_desktop_with_fallback(
+    engine: Arc<Mutex<Engine>>,
+    auth: Arc<Mutex<AuthState>>,
+    connected_device: Arc<Mutex<Option<String>>>,
+    running: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
+    no_ui: bool,
+    overlay_fallback: Option<String>,
+) -> Result<(), String> {
     let viewport = if no_ui {
         overlay_viewport()
     } else {
         egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 580.0])
-            .with_min_inner_size([420.0, 520.0])
-            .with_title("KineAnchor Settings")
+            .with_inner_size([440.0, 520.0])
+            .with_min_inner_size([420.0, 470.0])
+            .with_title("KineAnchor")
     };
 
     let options = eframe::NativeOptions {
@@ -183,7 +224,7 @@ pub fn run_desktop(
         },
         options,
         Box::new(move |_cc| {
-            Ok(Box::new(DesktopApp::new(
+            Ok(Box::new(DesktopApp::with_overlay_fallback(
                 engine,
                 auth,
                 connected_device,
@@ -191,6 +232,7 @@ pub fn run_desktop(
                 shutdown,
                 no_ui,
                 true,
+                overlay_fallback,
             )))
         }),
     );

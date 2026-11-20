@@ -46,6 +46,17 @@ impl ControllerProvider {
         self.event_dev.is_some()
     }
 
+    /// Returns the first accelerometer evdev node that exists but fails with `PermissionDenied`.
+    pub fn permission_denied_device() -> Option<String> {
+        let dev = Self::discover_imu_evdev()?;
+        match File::open(&dev) {
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                Some(dev.display().to_string())
+            }
+            _ => None,
+        }
+    }
+
     /// Finds `/dev/input/eventN` where `/sys/class/input/eventN/device/properties` has
     /// `INPUT_PROP_ACCELEROMETER` (bit 6 = 0x40).
     pub fn discover_imu_evdev() -> Option<PathBuf> {

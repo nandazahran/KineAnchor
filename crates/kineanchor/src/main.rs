@@ -102,6 +102,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         })?;
 
+    #[cfg(target_os = "linux")]
+    let mut overlay_fallback: Option<String> = None;
+    #[cfg(not(target_os = "linux"))]
+    let overlay_fallback: Option<String> = None;
+
     // Overlay backend: Wayland layer-shell owns its own thread and event queue; every other
     // target (X11, Windows) drives settings and overlay from one eframe event loop below.
     #[cfg(target_os = "linux")]
@@ -145,16 +150,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let _ = handle.join();
             return result.map_err(Into::into);
         }
+        if has_wayland {
+            overlay_fallback = Some(
+                "wlr-layer-shell unavailable. Using X11 fallback or GNOME Shell extension."
+                    .to_string(),
+            );
+        }
         println!("Wayland layer-shell not detected. Using X11/fallback overlay backend.");
     }
 
-    let result = x11_overlay::run_desktop(
+    let result = x11_overlay::run_desktop_with_fallback(
         engine,
         auth,
         connected_device,
         running.clone(),
         shutdown.clone(),
         no_ui,
+        overlay_fallback,
     );
     running.store(false, Ordering::Relaxed);
     shutdown.store(true, Ordering::Relaxed);
@@ -172,9 +184,9 @@ fn run_settings(
 ) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 580.0])
-            .with_min_inner_size([420.0, 520.0])
-            .with_title("KineAnchor Settings"),
+            .with_inner_size([440.0, 520.0])
+            .with_min_inner_size([420.0, 470.0])
+            .with_title("KineAnchor"),
         ..Default::default()
     };
     eframe::run_native(

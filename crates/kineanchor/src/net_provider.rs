@@ -38,6 +38,10 @@ pub struct AuthState {
     pub port: u16,
     /// Session direction, kept live so a settings change applies without a restart.
     pub mode: NetMode,
+    /// Last handshake rejection reason from the peer or local validator (`bad_token`, etc.).
+    pub last_reject_reason: Option<String>,
+    /// Last TCP listener bind error, if port 47474 could not be opened.
+    pub listen_error: Option<String>,
 }
 
 impl Default for AuthState {
@@ -63,12 +67,15 @@ impl AuthState {
             target_addr: None,
             port,
             mode: NetMode::default(),
+            last_reject_reason: None,
+            listen_error: None,
         }
     }
 
     pub fn generate_pair_secret(&mut self) -> String {
         let secret = random_hex(12);
         self.active_pair_secret = Some((secret.clone(), Instant::now()));
+        self.last_reject_reason = None;
         secret
     }
 
@@ -251,9 +258,13 @@ pub fn handle_session(
         }
     };
 
-    let (issued_token, desktop_name, newly_paired) = match auth_result {
-        Ok(v) => v,
+        let (issued_token, desktop_name, newly_paired) = match auth_result {
+        Ok(v) => {
+            auth.lock().unwrap().last_reject_reason = None;
+            v
+        }
         Err(reason) => {
+            auth.lock().unwrap().last_reject_reason = Some(reason.to_string());
             let reject = Message::Reject {
                 v: PROTOCOL_VERSION,
                 reason: reason.to_string(),
@@ -344,8 +355,13 @@ impl NetProvider {
     /// Binds the configured address and serves inbound phone sessions. Never dials.
     fn run_listener(&self, tx: &Sender<ProviderEvent>, stop: &Arc<AtomicBool>) {
         let listener = match TcpListener::bind(&self.bind_addr) {
-            Ok(l) => l,
+            Ok(l) => {
+                self.auth.lock().unwrap().listen_error = None;
+                l
+            }
             Err(e) => {
+                self.auth.lock().unwrap().listen_error =
+                    Some(format!("Cannot bind {}: {e}", self.bind_addr));
                 eprintln!(
                     "Net: cannot listen on {} ({e}); no phone sessions will be accepted",
                     self.bind_addr
