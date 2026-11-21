@@ -77,6 +77,9 @@ pub struct Config {
     /// Absent in config files written before 0.1.0; defaults to `DialPhone`.
     #[serde(default)]
     pub net_mode: NetMode,
+    /// Whether the UI displays literal technical labels and raw telemetry readouts.
+    #[serde(default)]
+    pub show_advanced_info: bool,
 }
 
 impl Default for Config {
@@ -94,6 +97,7 @@ impl Default for Config {
             invert: [false, false, false],
             synthetic: SyntheticParams::default(),
             net_mode: NetMode::default(),
+            show_advanced_info: false,
         }
     }
 }

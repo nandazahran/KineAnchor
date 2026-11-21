@@ -206,8 +206,8 @@ pub fn run_desktop_with_fallback(
         overlay_viewport()
     } else {
         egui::ViewportBuilder::default()
-            .with_inner_size([440.0, 520.0])
-            .with_min_inner_size([420.0, 470.0])
+            .with_inner_size([500.0, 680.0])
+            .with_min_inner_size([440.0, 560.0])
             .with_title("KineAnchor")
     };
 

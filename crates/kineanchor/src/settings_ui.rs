@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-//! Desktop settings window implementing the Precision Instrument v2 Doop design:
-//! Simple (Dark/Light/Paused/Unpaired/QR), Advanced (Wi-Fi/USB/Stale/udev/Auth/Demo),
-//! About (Privacy), and Legal (FOSS Licenses).
+//! Desktop settings window implementing the unified Precision Instrument v2 UI:
+//! Main control screen (Friendly labels by default, or literal technical labels + raw telemetry
+//! when `show_advanced_info` is enabled) and Settings screen (`Preferences`, `Privacy`, `Licenses`).
 //!
 //! Visual tokens and primitives live in [`crate::design`].
 
@@ -10,7 +10,7 @@ use crate::config_store::{config_file_path, save_config, save_pairing};
 use crate::controller_provider::ControllerProvider;
 use crate::design::{
     self, Icon, Kind, Palette, ScopeState, SegStyle, SliderRange, action_btn, activated, band,
-    band_last, divider, icon_btn, info_row, medium, palette, segmented, status_dot,
+    band_last, divider, icon_btn, info_row, palette, segmented, status_dot,
 };
 use crate::iio_provider::IioProvider;
 use crate::net_provider::AuthState;
@@ -22,15 +22,18 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Comfort presets on the Simple screen: gain, opacity, density.
-const PRESETS: [(&str, f32, f32, f32); 3] = [
-    ("Gentle", 0.7, 0.5, 0.8),
-    ("Balanced", 1.0, 0.65, 1.0),
-    ("Winding", 1.6, 0.7, 1.3),
+/// Comfort presets shared across friendly and advanced info modes: gain, opacity, density.
+const PRESETS: [(&str, &str, f32, f32, f32); 3] = [
+    ("Gentle", "0.7x Gentle", 0.7, 0.5, 0.8),
+    ("Balanced", "1.0x Balanced", 1.0, 0.65, 1.0),
+    ("Winding", "1.6x Winding", 1.6, 0.7, 1.3),
 ];
 
-const SOURCES: [&str; 4] = ["Wi-Fi", "USB", "Local IIO", "Demo"];
-const MAPPINGS: [&str; 2] = ["Force & tilt", "Full 6-DoF"];
+const SOURCES_FRIENDLY: [&str; 4] = ["Wi-Fi", "USB cable", "Built-in", "Demo"];
+const SOURCES_ADVANCED: [&str; 4] = ["Wi-Fi", "USB", "Local IIO", "Demo"];
+
+const MAPPINGS_FRIENDLY: [&str; 2] = ["Car & bus", "Boat & ship"];
+const MAPPINGS_ADVANCED: [&str; 2] = ["Force & tilt", "Full 6-DoF"];
 
 const DEPENDENCIES: [(&str, &str); 6] = [
     ("eframe / egui 0.31.1", "MIT OR Apache-2.0"),
@@ -43,8 +46,8 @@ const DEPENDENCIES: [(&str, &str); 6] = [
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Screen {
+    Main,
     Settings,
-    About,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -60,11 +63,9 @@ pub struct SettingsApp {
     auth: Arc<Mutex<AuthState>>,
     connected_device: Arc<Mutex<Option<String>>>,
     config: Config,
-    /// 0 = Simple (default), 1 = Advanced.
-    mode: usize,
     screen: Screen,
-    /// 0 = Privacy, 1 = Licenses.
-    about_tab: usize,
+    /// 0 = Preferences, 1 = Privacy, 2 = Licenses.
+    settings_tab: usize,
     show_qr: bool,
     qr_uri: String,
     qr_matrix: Option<(usize, Vec<bool>)>,
@@ -96,9 +97,8 @@ impl SettingsApp {
             auth,
             connected_device,
             config: initial_config,
-            mode: 0,
-            screen: Screen::Settings,
-            about_tab: 0,
+            screen: Screen::Main,
+            settings_tab: 0,
             show_qr: false,
             qr_uri: String::new(),
             qr_matrix: None,
@@ -188,7 +188,7 @@ impl SettingsApp {
     }
 
     fn preset_index(&self) -> Option<usize> {
-        PRESETS.iter().position(|(_, gain, opacity, density)| {
+        PRESETS.iter().position(|(_, _, gain, opacity, density)| {
             (self.config.gain - gain).abs() < 1e-3
                 && (self.config.opacity - opacity).abs() < 1e-3
                 && (self.config.density - density).abs() < 1e-3
@@ -196,7 +196,7 @@ impl SettingsApp {
     }
 
     fn apply_preset(&mut self, index: usize) {
-        if let Some((_, gain, opacity, density)) = PRESETS.get(index).copied() {
+        if let Some((_, _, gain, opacity, density)) = PRESETS.get(index).copied() {
             self.config.gain = gain;
             self.config.opacity = opacity;
             self.config.density = density;
@@ -206,8 +206,10 @@ impl SettingsApp {
 
     fn reset_defaults(&mut self) {
         let net = self.config.net_mode;
+        let show_advanced_info = self.config.show_advanced_info;
         self.config = Config::default();
         self.config.net_mode = net;
+        self.config.show_advanced_info = show_advanced_info;
         self.dirty = true;
     }
 
@@ -231,21 +233,31 @@ impl SettingsApp {
         age: Option<f64>,
         auth_rejected: Option<&str>,
     ) -> (String, StatusTone) {
+        let adv = self.config.show_advanced_info;
         if self.paused {
-            return ("Paused".to_string(), StatusTone::Muted);
+            return (
+                if adv { "Paused · 0 Hz" } else { "Paused" }.to_string(),
+                StatusTone::Muted,
+            );
         }
         if auth_rejected.is_some() && !matches!(status, Status::Live { .. } | Status::Synthetic) {
-            return ("Rejected".to_string(), StatusTone::Err);
+            return (
+                if adv { "Rejected" } else { "Pairing rejected" }.to_string(),
+                StatusTone::Err,
+            );
         }
         if self.udev_denied_dev.is_some()
             && self.source_index() == 2
             && !matches!(status, Status::Live { .. })
         {
-            return ("Denied".to_string(), StatusTone::Err);
+            return (
+                if adv { "Denied" } else { "Sensor blocked" }.to_string(),
+                StatusTone::Err,
+            );
         }
         match status {
             Status::Live { rate_hz } => {
-                if self.mode == 0 {
+                if !adv {
                     ("Active".to_string(), StatusTone::Live)
                 } else if matches!(self.cable_hint, CableHint::TetherActive { .. })
                     && self.config.net_mode == NetMode::DialPhone
@@ -256,11 +268,30 @@ impl SettingsApp {
                 }
             }
             Status::Stale { .. } => match age {
-                Some(seconds) => (format!("Stale · {seconds:.1} s"), StatusTone::Warn),
-                None => ("No sensor".to_string(), StatusTone::Err),
+                Some(seconds) => (
+                    if adv {
+                        format!("Stale · {seconds:.1} s")
+                    } else {
+                        "Paused · waiting".to_string()
+                    },
+                    StatusTone::Warn,
+                ),
+                None => (
+                    if adv {
+                        "No sensor · 0 Hz"
+                    } else {
+                        "No sensor"
+                    }
+                    .to_string(),
+                    StatusTone::Err,
+                ),
             },
             Status::Synthetic => (
-                format!("Demo · {:.2} Hz", self.config.synthetic.freq_hz),
+                if adv {
+                    format!("Demo · {:.2} Hz", self.config.synthetic.freq_hz)
+                } else {
+                    "Demo wave".to_string()
+                },
                 StatusTone::Warn,
             ),
             Status::Calibrating => ("Calibrating".to_string(), StatusTone::Warn),
@@ -350,44 +381,41 @@ impl SettingsApp {
         listen_error: Option<&str>,
     ) {
         match self.screen {
-            Screen::Settings => {
-                self.header(ui, p, ctx, status, age, auth_rejected);
-                if self.mode == 0 {
-                    self.simple(ui, p, ctx, status, age, device, paired, offset);
-                } else {
-                    self.advanced(
-                        ui,
-                        p,
-                        ctx,
-                        status,
-                        age,
-                        offset,
-                        dot_count,
-                        device,
-                        paired,
-                        auth_rejected,
-                        listen_error,
-                    );
-                }
+            Screen::Main => {
+                self.header(ui, p, status, age, auth_rejected);
+                self.main_screen(
+                    ui,
+                    p,
+                    ctx,
+                    status,
+                    age,
+                    offset,
+                    dot_count,
+                    device,
+                    paired,
+                    auth_rejected,
+                    listen_error,
+                );
             }
-            Screen::About => {
-                self.about_header(ui, p);
+            Screen::Settings => {
+                self.settings_header(ui, p);
                 band(ui, p, p.bg, Margin::symmetric(18, 10), |ui| {
                     if let Some(i) = segmented(
                         ui,
                         p,
-                        "about-tabs",
-                        &["Privacy", "Licenses"],
-                        self.about_tab,
+                        "settings-tabs",
+                        &["Preferences", "Privacy", "Licenses"],
+                        self.settings_tab,
                         SegStyle::tab(),
                     ) {
-                        self.about_tab = i;
+                        self.settings_tab = i;
+                        self.confirm_revoke = false;
                     }
                 });
-                if self.about_tab == 0 {
-                    self.about(ui, p, paired);
-                } else {
-                    self.legal(ui, p);
+                match self.settings_tab {
+                    0 => self.preferences(ui, p, paired),
+                    1 => self.privacy(ui, p),
+                    _ => self.legal(ui, p),
                 }
             }
         }
@@ -401,7 +429,6 @@ impl SettingsApp {
         &mut self,
         ui: &mut Ui,
         p: &Palette,
-        ctx: &egui::Context,
         status: &Status,
         age: Option<f64>,
         auth_rejected: Option<&str>,
@@ -416,57 +443,38 @@ impl SettingsApp {
         band(ui, p, p.card, Margin::symmetric(18, 11), |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
-                let tile = design::anchor_tile(ui, p, 24.0).on_hover_text("About KineAnchor");
+                let tile = design::anchor_tile(ui, p, 24.0).on_hover_text("Settings & about");
                 if activated(&tile) {
-                    self.screen = Screen::About;
+                    self.screen = Screen::Settings;
                 }
                 design::wordmark(ui, p, "KineAnchor");
                 ui.add_space(4.0);
                 status_dot(ui, p, &label, dot_color, text_color);
 
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
-                    let picked = segmented(
-                        ui,
-                        p,
-                        "settings-mode",
-                        &["Simple", "Advanced"],
-                        self.mode,
-                        SegStyle::header(),
-                    );
-                    if let Some(new_mode) = picked {
-                        if new_mode != self.mode {
-                            self.mode = new_mode;
-                            let size = if new_mode == 0 {
-                                [440.0, 520.0]
-                            } else {
-                                [500.0, 680.0]
-                            };
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size.into()));
-                        }
-                    }
                     if activated(&icon_btn(
                         ui,
                         p,
                         Icon::Settings,
                         Kind::Secondary,
                         28.0,
-                        "About and privacy",
+                        "Settings, privacy & licenses",
                     )) {
-                        self.screen = Screen::About;
+                        self.screen = Screen::Settings;
                     }
                 });
             });
         });
     }
 
-    fn about_header(&mut self, ui: &mut Ui, p: &Palette) {
+    fn settings_header(&mut self, ui: &mut Ui, p: &Palette) {
         band(ui, p, p.card, Margin::symmetric(18, 11), |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
                 let tile = design::anchor_tile(ui, p, 24.0);
                 if activated(&tile) {
-                    self.screen = Screen::Settings;
+                    self.confirm_revoke = false;
+                    self.screen = Screen::Main;
                 }
                 design::wordmark(ui, p, "KineAnchor");
                 ui.add_space(4.0);
@@ -479,7 +487,7 @@ impl SettingsApp {
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                     if activated(&icon_btn(ui, p, Icon::Back, Kind::Secondary, 28.0, "Back")) {
                         self.confirm_revoke = false;
-                        self.screen = Screen::Settings;
+                        self.screen = Screen::Main;
                     }
                 });
             });
@@ -487,87 +495,134 @@ impl SettingsApp {
     }
 
     // -----------------------------------------------------------------------
-    // Simple mode
+    // Unified Main Screen
     // -----------------------------------------------------------------------
 
     #[allow(clippy::too_many_arguments)]
-    fn simple(
+    fn main_screen(
         &mut self,
         ui: &mut Ui,
         p: &Palette,
         ctx: &egui::Context,
         status: &Status,
         age: Option<f64>,
+        offset: (f32, f32, f32),
+        dot_count: usize,
         device: Option<&str>,
         paired: Option<&str>,
-        offset: (f32, f32, f32),
+        auth_rejected: Option<&str>,
+        listen_error: Option<&str>,
     ) {
-        if self.show_qr {
-            self.wireless_pair_band(ui, p, ctx);
-            self.usb_tether_band(ui, p);
-            self.comfort_band(ui, p, true);
-            return;
-        }
-
+        let adv = self.config.show_advanced_info;
         let paused = self.paused;
-        let no_sensor =
-            !paused && matches!(status, Status::Stale { .. }) && age.is_none() && !self.local_imu;
-        let scope_state = if paused || no_sensor {
+        let auth_blocked =
+            auth_rejected.is_some() && !matches!(status, Status::Live { .. } | Status::Synthetic);
+        let no_sensor = !paused
+            && !auth_blocked
+            && matches!(status, Status::Stale { .. })
+            && age.is_none()
+            && !self.local_imu;
+        let rate_hz = match status {
+            Status::Live { rate_hz } => *rate_hz,
+            Status::Synthetic => 60.0,
+            _ => 0.0,
+        };
+        let scope_state = if paused || no_sensor || auth_blocked {
             ScopeState::Idle
         } else if matches!(status, Status::Stale { .. }) {
             ScopeState::Stale
         } else {
             ScopeState::Active
         };
-        let (status_text, readout) = if paused {
-            ("Cues held static", "0.0° · Paused".to_string())
-        } else if no_sensor {
-            ("No phone or local IMU", "0.0 px".to_string())
-        } else if let Some(s) = age {
-            ("Damping to rest", format!("{s:.1} s"))
-        } else if device.is_some() || self.local_imu || self.config.source == Source::Synthetic {
-            (
-                "Horizon steady",
-                format!("{:+.1}° · dx {:+.1}", offset.2.to_degrees(), offset.0),
-            )
-        } else {
-            ("Static reference", "0.0 px".to_string())
-        };
 
+        // 1. Horizon Scope + Primary Controls
         band(ui, p, p.bg, Margin::symmetric(18, 16), |ui| {
+            let (status_text, readout) = if !adv {
+                if paused {
+                    ("Cues held static".to_string(), "Paused".to_string())
+                } else if auth_blocked {
+                    ("Pairing rejected".to_string(), "Idle".to_string())
+                } else if no_sensor {
+                    ("No phone or local sensor".to_string(), "Idle".to_string())
+                } else if age.is_some() {
+                    ("Damping to rest".to_string(), "Waiting".to_string())
+                } else if self.config.source == Source::Synthetic {
+                    ("Demo wave active".to_string(), "Preview".to_string())
+                } else {
+                    (
+                        "Horizon steady".to_string(),
+                        format!("{:+.1}°", offset.2.to_degrees()),
+                    )
+                }
+            } else if paused {
+                (
+                    "Cues held static · 0 Hz".to_string(),
+                    "0.0° · Paused".to_string(),
+                )
+            } else if auth_blocked {
+                (
+                    format!("Auth rejected ({})", auth_rejected.unwrap_or("unknown")),
+                    "0.0 px".to_string(),
+                )
+            } else if no_sensor {
+                ("Awaiting IMU · 0 Hz".to_string(), "0.0 px".to_string())
+            } else if let Some(s) = age {
+                ("Damping to rest · 500 ms".to_string(), format!("{s:.1} s"))
+            } else if self.config.source == Source::Synthetic {
+                (
+                    format!("Synthetic · dx {:+.1} · dy {:+.1}", offset.0, offset.1),
+                    format!("{:+.1}° · 60 Hz · {dot_count} dots", offset.2.to_degrees()),
+                )
+            } else {
+                (
+                    format!("dx {:+.1} · dy {:+.1}", offset.0, offset.1),
+                    format!(
+                        "{:+.1}° · {rate_hz:.0} Hz · {dot_count} dots",
+                        offset.2.to_degrees()
+                    ),
+                )
+            };
+
+            let quiet_scope = paused || no_sensor || auth_blocked;
             design::horizon_scope(
                 ui,
                 p,
                 Vec2::new(ui.available_width(), 156.0),
-                if paused || no_sensor {
+                if quiet_scope {
                     0.0
                 } else {
-                    offset.0.clamp(-20.0, 20.0)
+                    offset.0.clamp(-24.0, 24.0)
                 },
-                if paused || no_sensor {
+                if quiet_scope {
                     0.0
                 } else {
-                    offset.1.clamp(-20.0, 20.0)
+                    offset.1.clamp(-24.0, 24.0)
                 },
-                if paused || no_sensor { 0.0 } else { offset.2 },
-                false,
+                if quiet_scope { 0.0 } else { offset.2 },
+                adv,
                 scope_state,
-                status_text,
+                &status_text,
                 &readout,
             );
 
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(8.0, 0.0);
                 let total = ui.available_width();
-                let zero_w = 88.0;
-                let primary_w = (total - zero_w - 8.0).max(120.0);
+                let zero_w = 96.0;
+                let zero_label = if adv { "Zero" } else { "Center" };
 
-                if no_sensor {
+                if no_sensor && !self.show_qr {
+                    let primary_w = (total - zero_w - 36.0 - 16.0).max(120.0);
+                    let pair_label = if adv {
+                        "Listen & pair QR"
+                    } else {
+                        "Pair phone"
+                    };
                     if activated(&action_btn(
                         ui,
                         p,
                         Some(Icon::QrCode),
-                        "Pair phone",
+                        pair_label,
                         Kind::Primary,
                         Some(primary_w),
                         36.0,
@@ -582,20 +637,31 @@ impl SettingsApp {
                     if activated(&action_btn(
                         ui,
                         p,
-                        Some(Icon::Pause),
-                        "Pause",
+                        Some(Icon::Recenter),
+                        zero_label,
                         Kind::Secondary,
                         Some(zero_w),
                         36.0,
                         None,
                     )) {
+                        self.engine.lock().unwrap().zero();
+                    }
+                    if activated(&icon_btn(
+                        ui,
+                        p,
+                        Icon::Pause,
+                        Kind::Secondary,
+                        36.0,
+                        "Pause",
+                    )) {
                         self.set_paused(true);
                     }
                 } else {
+                    let primary_w = (total - zero_w - 8.0).max(120.0);
                     let (icon, text) = if paused {
-                        (Icon::Play, "Resume")
+                        (Icon::Play, if adv { "Resume cues" } else { "Resume" })
                     } else {
-                        (Icon::Pause, "Pause")
+                        (Icon::Pause, if adv { "Pause cues" } else { "Pause" })
                     };
                     if activated(&action_btn(
                         ui,
@@ -613,7 +679,7 @@ impl SettingsApp {
                         ui,
                         p,
                         Some(Icon::Recenter),
-                        "Zero",
+                        zero_label,
                         Kind::Secondary,
                         Some(zero_w),
                         36.0,
@@ -625,53 +691,78 @@ impl SettingsApp {
             });
         });
 
-        if no_sensor {
-            band(ui, p, p.card, Margin::symmetric(18, 12), |ui| {
-                let (title, body) = match &self.cable_hint {
-                    CableHint::UsbPluggedNoTether { product } => (
-                        format!("{product} plugged in"),
-                        "Turn on USB tethering in phone settings.".to_string(),
-                    ),
-                    _ => (
-                        "No USB phone detected".to_string(),
-                        "Cable may be charge-only, or enable USB tethering on phone.".to_string(),
-                    ),
-                };
-                if design::notice_box(
-                    ui,
-                    p,
-                    Icon::Alert,
-                    p.error_fg,
-                    p.error_bg,
-                    p.error_border,
-                    &title,
-                    &body,
-                    Some(Icon::Refresh),
-                ) {
-                    self.cable_hint = probe_cable_hint();
-                }
+        // 2. Connection / Transport
+        band(ui, p, p.card, Margin::symmetric(18, 14), |ui| {
+            ui.horizontal(|ui| {
+                design::section(ui, p, if adv { "Transport" } else { "Connection" });
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    let kicker = if adv {
+                        if age.is_some() {
+                            "Watchdog 500 ms"
+                        } else if self.udev_denied_dev.is_some() {
+                            "udev rule"
+                        } else if self.config.source == Source::Synthetic {
+                            "Local test"
+                        } else {
+                            "TCP :47474"
+                        }
+                    } else {
+                        device.or(paired).unwrap_or("Phone or built-in")
+                    };
+                    design::tiny(ui, p, kicker);
+                });
             });
-        }
 
-        self.comfort_band(ui, p, no_sensor);
+            let sources = if adv {
+                &SOURCES_ADVANCED
+            } else {
+                &SOURCES_FRIENDLY
+            };
+            let current = self.source_index();
+            if let Some(i) = design::segmented_enabled(
+                ui,
+                p,
+                "source",
+                sources,
+                current,
+                SegStyle::card(),
+                &[
+                    false,
+                    false,
+                    !self.local_imu && self.udev_denied_dev.is_none(),
+                    false,
+                ],
+            ) {
+                if i != current {
+                    self.select_source(i);
+                }
+            }
 
-        if !no_sensor {
-            band_last(ui, p.card, Margin::symmetric(18, 13), |ui| {
+            if self.show_qr {
+                self.qr_drawer(ui, p, ctx, adv);
+            }
+
+            self.system_notices(ui, p, ctx, status, age, auth_rejected, listen_error);
+
+            if self.config.source == Source::Sensor {
                 let name = device
                     .map(ToOwned::to_owned)
                     .or_else(|| paired.map(ToOwned::to_owned))
                     .unwrap_or_else(|| "No phone paired".to_string());
-                let transport = match (
-                    self.config.source,
-                    self.config.net_mode,
-                    self.cable_hint.clone(),
-                ) {
-                    (Source::Synthetic, _, _) => "Demo wave (local)".to_string(),
-                    (_, _, CableHint::TetherActive { iface, .. }) => {
-                        format!("{iface} · 0.4 ms")
+                let transport = if adv {
+                    match (self.config.net_mode, &self.cable_hint) {
+                        (_, CableHint::TetherActive { iface, .. }) => {
+                            format!("{iface} · RNDIS 0.4 ms")
+                        }
+                        (NetMode::ListenForPhone, _) => "wlan0 · TCP :47474".to_string(),
+                        (NetMode::DialPhone, _) => self.cable_hint.label(),
                     }
-                    (_, NetMode::ListenForPhone, _) => "Wi-Fi · TCP :47474".to_string(),
-                    _ => "USB tether · auto".to_string(),
+                } else {
+                    match (self.config.net_mode, &self.cable_hint) {
+                        (_, CableHint::TetherActive { .. }) => "USB tether active".to_string(),
+                        (NetMode::ListenForPhone, _) => "Wi-Fi ready".to_string(),
+                        (NetMode::DialPhone, _) => self.cable_hint.label(),
+                    }
                 };
                 ui.horizontal(|ui| {
                     design::glyph(ui, Icon::Smartphone, 15.0, p.body);
@@ -698,545 +789,111 @@ impl SettingsApp {
                         if activated(&icon_btn(
                             ui,
                             p,
-                            Icon::QrCode,
+                            Icon::Copy,
                             Kind::Secondary,
                             28.0,
-                            "Show pairing QR",
-                        )) {
-                            self.config.source = Source::Sensor;
-                            self.config.net_mode = NetMode::ListenForPhone;
-                            self.set_paused(false);
-                            self.show_qr = true;
-                            self.dirty = true;
-                            self.refresh_qr(false);
-                        }
-                    });
-                });
-            });
-        }
-    }
-
-    fn comfort_band(&mut self, ui: &mut Ui, p: &Palette, is_last: bool) {
-        let draw_inner = |ui: &mut Ui| {
-            ui.horizontal(|ui| {
-                design::label(ui, p, "Comfort");
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let labels: Vec<&str> = PRESETS.iter().map(|(name, ..)| *name).collect();
-                    let selected = self.preset_index().unwrap_or(usize::MAX);
-                    let mut style = SegStyle::card();
-                    style.width = Some(236.0);
-                    if let Some(i) = segmented(ui, p, "comfort", &labels, selected, style) {
-                        self.apply_preset(i);
-                    }
-                });
-            });
-            divider(ui, p);
-            ui.horizontal(|ui| {
-                design::label(ui, p, "Visibility");
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.allocate_ui(Vec2::new(236.0, 20.0), |ui| {
-                        let mut opacity = self.config.opacity;
-                        if design::slider(
-                            ui,
-                            p,
-                            "",
-                            &mut opacity,
-                            SliderRange {
-                                min: 0.1,
-                                max: 0.8,
-                                step: 0.01,
-                            },
-                            &|value| visibility_label(value).to_string(),
-                        ) {
-                            self.config.opacity = opacity;
-                            self.dirty = true;
-                        }
-                    });
-                });
-            });
-        };
-        if is_last {
-            band_last(ui, p.card, Margin::symmetric(18, 13), draw_inner);
-        } else {
-            band(ui, p, p.card, Margin::symmetric(18, 13), draw_inner);
-        }
-    }
-
-    fn wireless_pair_band(&mut self, ui: &mut Ui, p: &Palette, ctx: &egui::Context) {
-        band(ui, p, p.bg, Margin::symmetric(18, 16), |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(16.0, 0.0);
-                if let Some(ref matrix) = self.qr_matrix {
-                    design::qr_tile(ui, p, matrix, 118.0);
-                }
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 8.0);
-                    design::section(ui, p, "Scan with phone");
-                    design::meta(ui, p, "Android app · TCP :47474");
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
-                        if activated(&action_btn(
-                            ui,
-                            p,
-                            Some(Icon::Copy),
-                            "Copy",
-                            Kind::Primary,
-                            None,
-                            28.0,
-                            None,
+                            "Copy pairing URI",
                         )) {
                             ctx.copy_text(self.qr_uri.clone());
                         }
                         if activated(&icon_btn(
                             ui,
                             p,
-                            Icon::Refresh,
+                            Icon::QrCode,
                             Kind::Secondary,
                             28.0,
-                            "New pairing secret",
-                        )) {
-                            self.refresh_qr(true);
-                        }
-                        if activated(&icon_btn(ui, p, Icon::Back, Kind::Secondary, 28.0, "Done")) {
-                            self.show_qr = false;
-                        }
-                    });
-                });
-            });
-            design::value_box(ui, p, 30.0, |ui| design::mono(ui, p, &self.qr_uri));
-        });
-    }
-
-    fn usb_tether_band(&mut self, ui: &mut Ui, p: &Palette) {
-        band(ui, p, p.card, Margin::symmetric(18, 14), |ui| {
-            ui.horizontal(|ui| {
-                design::glyph(ui, Icon::Usb, 14.0, p.body);
-                design::label(ui, p, "USB tether");
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| match &self
-                    .cable_hint
-                {
-                    CableHint::TetherActive { .. } => {
-                        status_dot(ui, p, "Active", p.success_fg, p.body);
-                    }
-                    CableHint::UsbPluggedNoTether { .. } => {
-                        status_dot(ui, p, "Tether off", p.warn_fg, p.warn_fg);
-                    }
-                    CableHint::NoUsbPhone => {
-                        status_dot(ui, p, "Waiting", p.muted, p.body);
-                    }
-                });
-            });
-            design::tiny(ui, p, &self.cable_hint.label());
-            ui.horizontal(|ui| {
-                if activated(&action_btn(
-                    ui,
-                    p,
-                    Some(Icon::Terminal),
-                    "USB & firewall",
-                    Kind::Secondary,
-                    None,
-                    28.0,
-                    None,
-                )) {
-                    self.launch_netsetup();
-                }
-                if let Some(ref msg) = self.netsetup_error {
-                    design::tiny(ui, p, msg);
-                }
-            });
-        });
-    }
-
-    fn launch_netsetup(&mut self) {
-        let helper = std::env::var_os("APPDIR")
-            .map(std::path::PathBuf::from)
-            .map(|d| d.join("usr/lib/kineanchor/kineanchor-netsetup"))
-            .filter(|p| p.is_file())
-            .unwrap_or_else(|| std::path::PathBuf::from("/usr/lib/kineanchor/kineanchor-netsetup"));
-        match Command::new("pkexec").arg(helper).spawn() {
-            Ok(_) => self.netsetup_error = None,
-            Err(e) => self.netsetup_error = Some(format!("Helper unavailable: {e}")),
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Advanced mode
-    // -----------------------------------------------------------------------
-
-    #[allow(clippy::too_many_arguments)]
-    fn advanced(
-        &mut self,
-        ui: &mut Ui,
-        p: &Palette,
-        ctx: &egui::Context,
-        status: &Status,
-        age: Option<f64>,
-        offset: (f32, f32, f32),
-        dot_count: usize,
-        device: Option<&str>,
-        paired: Option<&str>,
-        auth_rejected: Option<&str>,
-        listen_error: Option<&str>,
-    ) {
-        let paused = self.paused;
-        let rate_hz = match status {
-            Status::Live { rate_hz } => *rate_hz,
-            Status::Synthetic => 60.0,
-            _ => 0.0,
-        };
-        let scope_state = if paused
-            || (matches!(status, Status::Stale { .. }) && age.is_none())
-            || auth_rejected.is_some() && !matches!(status, Status::Live { .. } | Status::Synthetic)
-        {
-            ScopeState::Idle
-        } else if matches!(status, Status::Stale { .. }) {
-            ScopeState::Stale
-        } else {
-            ScopeState::Active
-        };
-
-        // 1. Hero Scope + KPIs
-        band(ui, p, p.bg, Margin::symmetric(18, 16), |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::new(16.0, 0.0);
-                let total = ui.available_width();
-                let scope_w = 244.0_f32.min(total * 0.54);
-                ui.allocate_ui(Vec2::new(scope_w, 158.0), |ui| {
-                    let (st_text, readout) = match age {
-                        Some(s) => ("Damping to rest".to_string(), format!("{s:.1} s")),
-                        None if paused => ("Cues held static".to_string(), "Paused".to_string()),
-                        None if auth_rejected.is_some()
-                            && !matches!(status, Status::Live { .. } | Status::Synthetic) =>
-                        {
-                            ("Auth rejected".to_string(), "0.0 px".to_string())
-                        }
-                        None if self.config.source == Source::Synthetic => (
-                            "Synthetic wave".to_string(),
-                            format!("{:+.1}°", offset.2.to_degrees()),
-                        ),
-                        None if matches!(status, Status::Stale { .. }) => {
-                            ("Awaiting IMU".to_string(), "0.0 px".to_string())
-                        }
-                        None => (
-                            format!("dx {:+.1} · dy {:+.1}", offset.0, offset.1),
-                            format!("{:+.1}°", offset.2.to_degrees()),
-                        ),
-                    };
-                    design::horizon_scope(
-                        ui,
-                        p,
-                        Vec2::new(scope_w, 158.0),
-                        if paused {
-                            0.0
-                        } else {
-                            offset.0.clamp(-24.0, 24.0)
-                        },
-                        if paused {
-                            0.0
-                        } else {
-                            offset.1.clamp(-24.0, 24.0)
-                        },
-                        if paused { 0.0 } else { offset.2 },
-                        true,
-                        scope_state,
-                        &st_text,
-                        &readout,
-                    );
-                });
-
-                ui.vertical(|ui| {
-                    ui.set_width(ui.available_width());
-                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 8.0);
-                    design::meta(ui, p, "Rate");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{rate_hz:.0} Hz"))
-                                .size(24.0)
-                                .family(medium())
-                                .color(p.ink),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                            let note = if let Some(reason) = auth_rejected {
-                                reason
-                            } else if self.config.source == Source::Synthetic {
-                                "Synthetic"
-                            } else if rate_hz > 0.0 {
-                                device.or(paired).unwrap_or("Stream")
+                            if self.show_qr {
+                                "Hide pairing QR"
                             } else {
-                                "No packets"
-                            };
-                            design::tiny(ui, p, note);
-                        });
-                    });
-                    divider(ui, p);
-                    design::meta(ui, p, "Shift");
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            RichText::new(format!("{:+.1} px", offset.0))
-                                .size(20.0)
-                                .family(medium())
-                                .color(p.ink),
-                        );
-                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                            design::tiny(ui, p, &format!("{dot_count} dots"));
-                        });
-                    });
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
-                        let btn_w = (ui.available_width() - 34.0).max(80.0);
-                        if activated(&action_btn(
-                            ui,
-                            p,
-                            Some(Icon::Recenter),
-                            "Zero",
-                            Kind::Primary,
-                            Some(btn_w),
-                            28.0,
-                            None,
+                                "Show pairing QR"
+                            },
                         )) {
-                            self.engine.lock().unwrap().zero();
+                            self.show_qr = !self.show_qr;
+                            if self.show_qr {
+                                self.config.net_mode = NetMode::ListenForPhone;
+                                self.set_paused(false);
+                                self.dirty = true;
+                                self.refresh_qr(false);
+                            }
                         }
-                        let pause_icon = if paused { Icon::Play } else { Icon::Pause };
-                        if activated(&icon_btn(
-                            ui,
-                            p,
-                            pause_icon,
-                            Kind::Secondary,
-                            28.0,
-                            if paused { "Resume" } else { "Pause" },
-                        )) {
-                            self.set_paused(!paused);
-                        }
-                    });
-                });
-            });
-        });
-
-        // 2. Transport & system error banners
-        band(ui, p, p.card, Margin::symmetric(18, 14), |ui| {
-            ui.horizontal(|ui| {
-                design::section(ui, p, "Transport");
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let kicker = if age.is_some() {
-                        "Watchdog 500 ms"
-                    } else if self.udev_denied_dev.is_some() {
-                        "udev rule"
-                    } else if self.config.source == Source::Synthetic {
-                        "Local test"
-                    } else {
-                        "TCP :47474"
-                    };
-                    design::tiny(ui, p, kicker);
-                });
-            });
-
-            let current = self.source_index();
-            if let Some(i) = design::segmented_enabled(
-                ui,
-                p,
-                "source",
-                &SOURCES,
-                current,
-                SegStyle::card(),
-                &[
-                    false,
-                    false,
-                    !self.local_imu && self.udev_denied_dev.is_none(),
-                    false,
-                ],
-            ) {
-                if i != current {
-                    self.select_source(i);
-                }
-            }
-
-            if let Some(reason) = auth_rejected {
-                if design::notice_box(
-                    ui,
-                    p,
-                    Icon::Alert,
-                    p.error_fg,
-                    p.error_bg,
-                    p.error_border,
-                    &format!("Pairing rejected ({reason})"),
-                    "Refresh the QR code and scan again on your phone.",
-                    Some(Icon::Refresh),
-                ) {
-                    self.refresh_qr(true);
-                    self.show_qr = true;
-                    self.mode = 0;
-                }
-            }
-
-            if let Some(ref dev_path) = self.udev_denied_dev {
-                if design::notice_box(
-                    ui,
-                    p,
-                    Icon::Alert,
-                    p.error_fg,
-                    p.error_bg,
-                    p.error_border,
-                    &format!("{dev_path} permission denied"),
-                    "Copy 99-kineanchor.rules to /etc/udev/rules.d/.",
-                    Some(Icon::Copy),
-                ) {
-                    ctx.copy_text("sudo cp packaging/linux/99-kineanchor.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules".to_string());
-                }
-            }
-
-            if let Some(err) = listen_error {
-                let _ = design::notice_box(
-                    ui,
-                    p,
-                    Icon::Alert,
-                    p.error_fg,
-                    p.error_bg,
-                    p.error_border,
-                    err,
-                    "Close other KineAnchor instance or check firewall rules.",
-                    None,
-                );
-            }
-
-            if let Some(s) = age {
-                if design::notice_box(
-                    ui,
-                    p,
-                    Icon::WifiOff,
-                    p.warn_fg,
-                    p.warn_bg,
-                    p.warn_border,
-                    &format!("Stream stalled ({s:.1} s)"),
-                    "Dots hold static. Re-scan QR or plug USB.",
-                    Some(Icon::QrCode),
-                ) {
-                    self.config.source = Source::Sensor;
-                    self.config.net_mode = NetMode::ListenForPhone;
-                    self.show_qr = true;
-                    self.mode = 0;
-                    self.dirty = true;
-                    self.refresh_qr(false);
-                }
-            } else if matches!(status, Status::Stale { .. })
-                && self.config.source == Source::Sensor
-                && design::notice_box(
-                    ui,
-                    p,
-                    Icon::Alert,
-                    p.error_fg,
-                    p.error_bg,
-                    p.error_border,
-                    "No sensor data received",
-                    &self.cable_hint.label(),
-                    Some(Icon::QrCode),
-                )
-            {
-                self.config.net_mode = NetMode::ListenForPhone;
-                self.show_qr = true;
-                self.mode = 0;
-                self.dirty = true;
-                self.refresh_qr(false);
-            }
-
-            if let Some(ref msg) = self.overlay_fallback {
-                let _ = design::notice_box(
-                    ui,
-                    p,
-                    Icon::Layers,
-                    p.warn_fg,
-                    p.warn_bg,
-                    p.warn_border,
-                    "wlr-layer-shell unavailable",
-                    msg,
-                    None,
-                );
-            }
-
-            if let Some(ref err) = self.netsetup_error {
-                if design::notice_box(
-                    ui,
-                    p,
-                    Icon::Terminal,
-                    p.warn_fg,
-                    p.warn_bg,
-                    p.warn_border,
-                    "kineanchor-netsetup unavailable",
-                    err,
-                    Some(Icon::Copy),
-                ) {
-                    ctx.copy_text("sudo ufw allow 47474/tcp".to_string());
-                }
-            }
-
-            if self.config.source == Source::Sensor {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
-                    let box_w = (ui.available_width() - 68.0).max(140.0);
-                    ui.allocate_ui(Vec2::new(box_w, 30.0), |ui| {
-                        design::value_box(ui, p, 30.0, |ui| design::mono(ui, p, &self.qr_uri));
-                    });
-                    if activated(&icon_btn(
-                        ui,
-                        p,
-                        Icon::QrCode,
-                        Kind::Secondary,
-                        28.0,
-                        "QR code",
-                    )) {
-                        self.show_qr = !self.show_qr;
-                        if self.show_qr {
-                            self.refresh_qr(false);
-                            self.mode = 0;
-                        }
-                    }
-                    if activated(&icon_btn(
-                        ui,
-                        p,
-                        Icon::Copy,
-                        Kind::Secondary,
-                        28.0,
-                        "Copy URI",
-                    )) {
-                        ctx.copy_text(self.qr_uri.clone());
-                    }
-                });
-                let iface_line = match (self.config.net_mode, &self.cable_hint) {
-                    (_, CableHint::TetherActive { iface, .. }) => format!("{iface} · RNDIS"),
-                    (NetMode::ListenForPhone, _) => "wlan0 · TCP :47474".to_string(),
-                    (NetMode::DialPhone, _) => self.cable_hint.label(),
-                };
-                ui.horizontal(|ui| {
-                    design::tiny(ui, p, &iface_line);
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         if activated(&action_btn(
                             ui,
                             p,
                             Some(Icon::Terminal),
-                            "Netsetup",
-                            Kind::Ghost,
+                            if adv { "Netsetup" } else { "USB help" },
+                            Kind::Secondary,
                             None,
-                            24.0,
+                            28.0,
                             None,
                         )) {
                             self.launch_netsetup();
                         }
                     });
                 });
+                if adv && !self.show_qr {
+                    design::value_box(ui, p, 30.0, |ui| design::mono(ui, p, &self.qr_uri));
+                }
             }
         });
 
-        // 3. Filter & cues
+        // 3. Motion & cues / Filter & cues (unified across modes)
         band_last(ui, p.card, Margin::symmetric(18, 14), |ui| {
-            design::section(ui, p, "Filter & cues");
-            let mapping = if self.config.vehicle == Vehicle::Ship {
-                1
-            } else {
-                0
-            };
-            if let Some(i) = segmented(ui, p, "mapping", &MAPPINGS, mapping, SegStyle::card()) {
-                self.config.vehicle = if i == 1 { Vehicle::Ship } else { Vehicle::Car };
-                self.dirty = true;
-            }
+            ui.horizontal(|ui| {
+                design::section(
+                    ui,
+                    p,
+                    if adv {
+                        "Filter & cues"
+                    } else {
+                        "Motion & cues"
+                    },
+                );
+                if adv {
+                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                        design::tiny(ui, p, "omega 6.0 · zeta 0.70 · tau 0.50 s");
+                    });
+                }
+            });
+
+            ui.horizontal(|ui| {
+                design::label(ui, p, if adv { "Preset" } else { "Comfort" });
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    let labels: Vec<&str> = PRESETS
+                        .iter()
+                        .map(|(friendly, literal, ..)| if adv { *literal } else { *friendly })
+                        .collect();
+                    let selected = self.preset_index().unwrap_or(usize::MAX);
+                    let mut style = SegStyle::card();
+                    style.width = Some(280.0);
+                    if let Some(i) = segmented(ui, p, "comfort", &labels, selected, style) {
+                        self.apply_preset(i);
+                    }
+                });
+            });
+
+            ui.horizontal(|ui| {
+                design::label(ui, p, if adv { "Filter mapping" } else { "Travel mode" });
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    let mapping = if self.config.vehicle == Vehicle::Ship {
+                        1
+                    } else {
+                        0
+                    };
+                    let labels = if adv {
+                        &MAPPINGS_ADVANCED
+                    } else {
+                        &MAPPINGS_FRIENDLY
+                    };
+                    let mut style = SegStyle::card();
+                    style.width = Some(280.0);
+                    if let Some(i) = segmented(ui, p, "mapping", labels, mapping, style) {
+                        self.config.vehicle = if i == 1 { Vehicle::Ship } else { Vehicle::Car };
+                        self.dirty = true;
+                    }
+                });
+            });
+
+            divider(ui, p);
 
             ui.horizontal(|ui| {
                 let half = (ui.available_width() - 18.0) * 0.5;
@@ -1246,14 +903,20 @@ impl SettingsApp {
                     if design::slider(
                         ui,
                         p,
-                        "Gain",
+                        if adv { "Gain" } else { "Strength" },
                         &mut gain,
                         SliderRange {
                             min: 0.2,
                             max: 3.0,
                             step: 0.05,
                         },
-                        &|value| format!("{value:.2}x"),
+                        &|value| {
+                            if adv {
+                                format!("{value:.2}x")
+                            } else {
+                                strength_label(value).to_string()
+                            }
+                        },
                     ) {
                         self.config.gain = gain;
                         self.dirty = true;
@@ -1266,14 +929,20 @@ impl SettingsApp {
                     if design::slider(
                         ui,
                         p,
-                        "Margin",
+                        if adv { "Margin" } else { "Screen border" },
                         &mut band_val,
                         SliderRange {
                             min: 0.05,
                             max: 0.25,
                             step: 0.01,
                         },
-                        &|value| format!("{:.0}%", value * 100.0),
+                        &|value| {
+                            if adv {
+                                format!("{:.0}%", value * 100.0)
+                            } else {
+                                border_label(value).to_string()
+                            }
+                        },
                     ) {
                         self.config.edge_band = band_val;
                         self.dirty = true;
@@ -1289,7 +958,7 @@ impl SettingsApp {
                     if design::slider(
                         ui,
                         p,
-                        "Dots",
+                        if adv { "Density" } else { "Dot amount" },
                         &mut density,
                         SliderRange {
                             min: 0.3,
@@ -1297,11 +966,15 @@ impl SettingsApp {
                             step: 0.05,
                         },
                         &|value| {
-                            let approx = (12.0 * value) as i32;
-                            if dot_count > 0 {
-                                format!("{dot_count}")
+                            if adv {
+                                if dot_count > 0 {
+                                    format!("{dot_count} · {value:.2}x")
+                                } else {
+                                    let approx = (12.0 * value) as i32;
+                                    format!("~{approx} · {value:.2}x")
+                                }
                             } else {
-                                format!("~{approx}")
+                                density_label(value).to_string()
                             }
                         },
                     ) {
@@ -1316,14 +989,20 @@ impl SettingsApp {
                     if design::slider(
                         ui,
                         p,
-                        "Opacity",
+                        if adv { "Opacity" } else { "Visibility" },
                         &mut opacity,
                         SliderRange {
                             min: 0.1,
                             max: 0.8,
                             step: 0.01,
                         },
-                        &|value| format!("{:.0}%", value * 100.0),
+                        &|value| {
+                            if adv {
+                                format!("{:.0}%", value * 100.0)
+                            } else {
+                                visibility_label(value).to_string()
+                            }
+                        },
                     ) {
                         self.config.opacity = opacity;
                         self.dirty = true;
@@ -1332,16 +1011,29 @@ impl SettingsApp {
             });
 
             ui.horizontal(|ui| {
-                design::meta(ui, p, "Invert axis");
+                design::meta(
+                    ui,
+                    p,
+                    if adv {
+                        "Invert axis"
+                    } else {
+                        "Reverse movement"
+                    },
+                );
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    ui.allocate_ui(Vec2::new(236.0, 32.0), |ui| {
+                    ui.allocate_ui(Vec2::new(280.0, 32.0), |ui| {
                         let mut invert = self.config.invert;
                         let ship = self.config.vehicle == Vehicle::Ship;
+                        let axis_labels = if adv {
+                            ["Horizontal", "Vertical", "Roll"]
+                        } else {
+                            ["Left/Right", "Up/Down", "Tilt"]
+                        };
                         if design::toggles(
                             ui,
                             p,
                             "invert",
-                            &["Horizontal", "Vertical", "Roll"],
+                            &axis_labels,
                             &mut invert,
                             &[true, true, ship],
                         ) {
@@ -1361,14 +1053,20 @@ impl SettingsApp {
                         if design::slider(
                             ui,
                             p,
-                            "Demo frequency",
+                            if adv { "Demo frequency" } else { "Wave speed" },
                             &mut freq,
                             SliderRange {
                                 min: 0.05,
                                 max: 0.5,
                                 step: 0.01,
                             },
-                            &|value| format!("{value:.2} Hz"),
+                            &|value| {
+                                if adv {
+                                    format!("{value:.2} Hz")
+                                } else {
+                                    wave_speed_label(value).to_string()
+                                }
+                            },
                         ) {
                             self.config.synthetic.freq_hz = freq;
                             self.dirty = true;
@@ -1381,14 +1079,20 @@ impl SettingsApp {
                         if design::slider(
                             ui,
                             p,
-                            "Demo amplitude",
+                            if adv { "Demo amplitude" } else { "Wave size" },
                             &mut amp,
                             SliderRange {
                                 min: 0.0,
                                 max: 0.5,
                                 step: 0.01,
                             },
-                            &|value| format!("{value:.2}"),
+                            &|value| {
+                                if adv {
+                                    format!("{value:.2}")
+                                } else {
+                                    wave_size_label(value).to_string()
+                                }
+                            },
                         ) {
                             self.config.synthetic.amplitude = amp;
                             self.dirty = true;
@@ -1402,40 +1106,341 @@ impl SettingsApp {
                     p.warn_fg,
                     p.warn_bg,
                     p.warn_border,
-                    "0.2 Hz is an experimental motion band",
-                    "Pause cues or switch to Sensor if uncomfortable.",
+                    if adv {
+                        "0.2 Hz is an experimental motion band"
+                    } else {
+                        "Test wave active"
+                    },
+                    if adv {
+                        "Pause cues or switch to Sensor if uncomfortable."
+                    } else {
+                        "Preview only. Switch back to Wi-Fi or USB cable before travel."
+                    },
                     None,
                 );
             }
+        });
+    }
 
-            divider(ui, p);
-            ui.horizontal(|ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
-                    design::label(ui, p, "Spring ODE");
-                    design::tiny(ui, p, "omega 6.0 rad/s, zeta 0.70, tau 0.50 s");
-                });
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+    fn qr_drawer(&mut self, ui: &mut Ui, p: &Palette, ctx: &egui::Context, adv: bool) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(16.0, 0.0);
+            if let Some(ref matrix) = self.qr_matrix {
+                design::qr_tile(ui, p, matrix, 118.0);
+            }
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing = Vec2::new(6.0, 8.0);
+                design::section(ui, p, "Scan with phone");
+                design::meta(
+                    ui,
+                    p,
+                    if adv {
+                        "Android app · TCP :47474"
+                    } else {
+                        "Open KineAnchor on your phone"
+                    },
+                );
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::new(6.0, 0.0);
+                    if activated(&action_btn(
+                        ui,
+                        p,
+                        Some(Icon::Copy),
+                        "Copy",
+                        Kind::Primary,
+                        None,
+                        28.0,
+                        None,
+                    )) {
+                        ctx.copy_text(self.qr_uri.clone());
+                    }
                     if activated(&icon_btn(
                         ui,
                         p,
-                        Icon::Reset,
+                        Icon::Refresh,
                         Kind::Secondary,
                         28.0,
+                        "New pairing secret",
+                    )) {
+                        self.refresh_qr(true);
+                    }
+                    if activated(&action_btn(
+                        ui,
+                        p,
+                        Some(Icon::Back),
+                        "Hide QR",
+                        Kind::Secondary,
+                        None,
+                        28.0,
+                        None,
+                    )) {
+                        self.show_qr = false;
+                    }
+                });
+            });
+        });
+        if adv {
+            design::value_box(ui, p, 30.0, |ui| design::mono(ui, p, &self.qr_uri));
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn system_notices(
+        &mut self,
+        ui: &mut Ui,
+        p: &Palette,
+        ctx: &egui::Context,
+        status: &Status,
+        age: Option<f64>,
+        auth_rejected: Option<&str>,
+        listen_error: Option<&str>,
+    ) {
+        let adv = self.config.show_advanced_info;
+
+        if let Some(reason) = auth_rejected {
+            if design::notice_box(
+                ui,
+                p,
+                Icon::Alert,
+                p.error_fg,
+                p.error_bg,
+                p.error_border,
+                &if adv {
+                    format!("Pairing rejected ({reason})")
+                } else {
+                    "Phone pairing failed".to_string()
+                },
+                "Refresh the QR code and scan again on your phone.",
+                Some(Icon::Refresh),
+            ) {
+                self.refresh_qr(true);
+                self.show_qr = true;
+            }
+        }
+
+        if let Some(ref dev_path) = self.udev_denied_dev {
+            if design::notice_box(
+                ui,
+                p,
+                Icon::Alert,
+                p.error_fg,
+                p.error_bg,
+                p.error_border,
+                &if adv {
+                    format!("{dev_path} permission denied")
+                } else {
+                    "Built-in sensor permission needed".to_string()
+                },
+                "Copy 99-kineanchor.rules to /etc/udev/rules.d/.",
+                Some(Icon::Copy),
+            ) {
+                ctx.copy_text("sudo cp packaging/linux/99-kineanchor.rules /etc/udev/rules.d/ && sudo udevadm control --reload-rules".to_string());
+            }
+        }
+
+        if let Some(err) = listen_error {
+            let _ = design::notice_box(
+                ui,
+                p,
+                Icon::Alert,
+                p.error_fg,
+                p.error_bg,
+                p.error_border,
+                err,
+                "Close other KineAnchor instance or check firewall rules.",
+                None,
+            );
+        }
+
+        if let Some(s) = age {
+            if design::notice_box(
+                ui,
+                p,
+                Icon::WifiOff,
+                p.warn_fg,
+                p.warn_bg,
+                p.warn_border,
+                &if adv {
+                    format!("Stream stalled ({s:.1} s)")
+                } else {
+                    "Phone signal paused".to_string()
+                },
+                "Dots hold static. Re-scan QR or plug USB.",
+                Some(Icon::QrCode),
+            ) {
+                self.config.source = Source::Sensor;
+                self.config.net_mode = NetMode::ListenForPhone;
+                self.show_qr = true;
+                self.dirty = true;
+                self.refresh_qr(false);
+            }
+        } else if matches!(status, Status::Stale { .. }) && self.config.source == Source::Sensor {
+            let (title, body) = match &self.cable_hint {
+                CableHint::UsbPluggedNoTether { product } => (
+                    format!("{product} plugged in"),
+                    "Turn on USB tethering in phone settings.".to_string(),
+                ),
+                _ => (
+                    if adv {
+                        "No sensor data received"
+                    } else {
+                        "No USB phone detected"
+                    }
+                    .to_string(),
+                    if adv {
+                        self.cable_hint.label()
+                    } else {
+                        "Cable may be charge-only, or enable USB tethering on phone.".to_string()
+                    },
+                ),
+            };
+            if design::notice_box(
+                ui,
+                p,
+                Icon::Alert,
+                p.error_fg,
+                p.error_bg,
+                p.error_border,
+                &title,
+                &body,
+                Some(Icon::Refresh),
+            ) {
+                self.cable_hint = probe_cable_hint();
+            }
+        }
+
+        if let Some(ref msg) = self.overlay_fallback {
+            let _ = design::notice_box(
+                ui,
+                p,
+                Icon::Layers,
+                p.warn_fg,
+                p.warn_bg,
+                p.warn_border,
+                if adv {
+                    "wlr-layer-shell unavailable"
+                } else {
+                    "Wayland overlay fallback active"
+                },
+                msg,
+                None,
+            );
+        }
+
+        if let Some(ref err) = self.netsetup_error {
+            if design::notice_box(
+                ui,
+                p,
+                Icon::Terminal,
+                p.warn_fg,
+                p.warn_bg,
+                p.warn_border,
+                if adv {
+                    "kineanchor-netsetup unavailable"
+                } else {
+                    "USB & firewall helper unavailable"
+                },
+                err,
+                Some(Icon::Copy),
+            ) {
+                ctx.copy_text("sudo ufw allow 47474/tcp".to_string());
+            }
+        }
+    }
+
+    fn launch_netsetup(&mut self) {
+        let helper = std::env::var_os("APPDIR")
+            .map(std::path::PathBuf::from)
+            .map(|d| d.join("usr/lib/kineanchor/kineanchor-netsetup"))
+            .filter(|p| p.is_file())
+            .unwrap_or_else(|| std::path::PathBuf::from("/usr/lib/kineanchor/kineanchor-netsetup"));
+        match Command::new("pkexec").arg(helper).spawn() {
+            Ok(_) => self.netsetup_error = None,
+            Err(e) => self.netsetup_error = Some(format!("Helper unavailable: {e}")),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Settings Screen (`Preferences` | `Privacy` | `Licenses`)
+    // -----------------------------------------------------------------------
+
+    fn preferences(&mut self, ui: &mut Ui, p: &Palette, paired: Option<&str>) {
+        let adv = self.config.show_advanced_info;
+
+        band(ui, p, p.card, Margin::symmetric(18, 16), |ui| {
+            design::section(ui, p, "Interface");
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width((ui.available_width() - 130.0).max(160.0));
+                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+                    design::label(ui, p, "Show advanced info");
+                    design::meta(
+                        ui,
+                        p,
+                        "Use literal names (Gain, Opacity, 6-DoF) and show raw Hz, offset, and transport telemetry.",
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    let mut style = SegStyle::card();
+                    style.width = Some(112.0);
+                    let cur = usize::from(adv);
+                    if let Some(i) = segmented(ui, p, "show-advanced-info", &["Off", "On"], cur, style) {
+                        let next = i == 1;
+                        if next != self.config.show_advanced_info {
+                            self.config.show_advanced_info = next;
+                            self.dirty = true;
+                        }
+                    }
+                });
+            });
+        });
+
+        band(ui, p, p.card, Margin::symmetric(18, 16), |ui| {
+            design::section(ui, p, "Calibration & filter");
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    ui.set_width((ui.available_width() - 144.0).max(150.0));
+                    ui.spacing_mut().item_spacing = Vec2::new(0.0, 2.0);
+                    design::label(
+                        ui,
+                        p,
+                        if adv {
+                            "Spring ODE"
+                        } else {
+                            "Motion smoothing"
+                        },
+                    );
+                    design::meta(
+                        ui,
+                        p,
+                        if adv {
+                            "omega 6.0 rad/s, zeta 0.70, tau 0.50 s · 500 ms watchdog"
+                        } else {
+                            "Damps jerky motion and returns cues smoothly to rest."
+                        },
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                    if activated(&action_btn(
+                        ui,
+                        p,
+                        Some(Icon::Reset),
                         "Reset defaults",
+                        Kind::Secondary,
+                        None,
+                        28.0,
+                        None,
                     )) {
                         self.reset_defaults();
                     }
                 });
             });
         });
+
+        self.local_storage_band(ui, p, paired);
     }
 
-    // -----------------------------------------------------------------------
-    // About / Legal screens
-    // -----------------------------------------------------------------------
-
-    fn about(&mut self, ui: &mut Ui, p: &Palette, paired: Option<&str>) {
+    fn privacy(&mut self, ui: &mut Ui, p: &Palette) {
         band(ui, p, p.card, Margin::symmetric(18, 16), |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::new(14.0, 0.0);
@@ -1489,7 +1494,7 @@ impl SettingsApp {
             });
         });
 
-        band(ui, p, p.card, Margin::symmetric(18, 16), |ui| {
+        band_last(ui, p.card, Margin::symmetric(18, 16), |ui| {
             ui.horizontal(|ui| {
                 design::section(ui, p, "Zero telemetry");
                 ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -1524,7 +1529,9 @@ impl SettingsApp {
                 true,
             );
         });
+    }
 
+    fn local_storage_band(&mut self, ui: &mut Ui, p: &Palette, paired: Option<&str>) {
         band_last(ui, p.card, Margin::symmetric(18, 16), |ui| {
             ui.horizontal(|ui| {
                 design::section(ui, p, "Local storage");
@@ -1697,6 +1704,38 @@ fn probe_udev_denied() -> Option<String> {
     ControllerProvider::permission_denied_device().or_else(IioProvider::permission_denied_device)
 }
 
+fn strength_label(gain: f32) -> &'static str {
+    if gain < 0.85 {
+        "Gentle"
+    } else if gain < 1.3 {
+        "Balanced"
+    } else if gain < 2.0 {
+        "Strong"
+    } else {
+        "Max"
+    }
+}
+
+fn border_label(edge_band: f32) -> &'static str {
+    if edge_band < 0.10 {
+        "Narrow"
+    } else if edge_band < 0.17 {
+        "Medium"
+    } else {
+        "Wide"
+    }
+}
+
+fn density_label(density: f32) -> &'static str {
+    if density < 0.85 {
+        "Few"
+    } else if density < 1.35 {
+        "Normal"
+    } else {
+        "Many"
+    }
+}
+
 fn visibility_label(opacity: f32) -> &'static str {
     if opacity < 0.35 {
         "Gentle"
@@ -1706,6 +1745,26 @@ fn visibility_label(opacity: f32) -> &'static str {
         "Medium"
     } else {
         "Strong"
+    }
+}
+
+fn wave_speed_label(freq_hz: f32) -> &'static str {
+    if freq_hz < 0.14 {
+        "Slow"
+    } else if freq_hz < 0.28 {
+        "Medium"
+    } else {
+        "Fast"
+    }
+}
+
+fn wave_size_label(amplitude: f32) -> &'static str {
+    if amplitude < 0.12 {
+        "Subtle"
+    } else if amplitude < 0.28 {
+        "Medium"
+    } else {
+        "Large"
     }
 }
 
@@ -1796,13 +1855,44 @@ mod tests {
     }
 
     #[test]
-    fn status_indicator_covers_system_states() {
+    fn status_indicator_covers_system_states_in_friendly_and_advanced_modes() {
         let mut app = app_with(Config::default());
         app.udev_denied_dev = None;
 
+        // Friendly mode (default)
+        assert!(!app.config.show_advanced_info);
         assert_eq!(
             app.status_indicator(&Status::Stale { since: 0.0 }, None, None),
             ("No sensor".to_string(), StatusTone::Err)
+        );
+        assert_eq!(
+            app.status_indicator(&Status::Stale { since: 1.0 }, Some(4.2), None),
+            ("Paused · waiting".to_string(), StatusTone::Warn)
+        );
+        assert_eq!(
+            app.status_indicator(&Status::Stale { since: 0.0 }, None, Some("bad_token")),
+            ("Pairing rejected".to_string(), StatusTone::Err)
+        );
+        assert_eq!(
+            app.status_indicator(&Status::Synthetic, None, None),
+            ("Demo wave".to_string(), StatusTone::Warn)
+        );
+        assert_eq!(
+            app.status_indicator(&Status::Live { rate_hz: 50.0 }, None, None),
+            ("Active".to_string(), StatusTone::Live)
+        );
+        app.set_paused(true);
+        assert_eq!(
+            app.status_indicator(&Status::Live { rate_hz: 50.0 }, None, None),
+            ("Paused".to_string(), StatusTone::Muted)
+        );
+
+        // Advanced info mode
+        app.set_paused(false);
+        app.config.show_advanced_info = true;
+        assert_eq!(
+            app.status_indicator(&Status::Stale { since: 0.0 }, None, None),
+            ("No sensor · 0 Hz".to_string(), StatusTone::Err)
         );
         assert_eq!(
             app.status_indicator(&Status::Stale { since: 1.0 }, Some(4.2), None),
@@ -1818,28 +1908,44 @@ mod tests {
         );
         assert_eq!(
             app.status_indicator(&Status::Live { rate_hz: 50.0 }, None, None),
-            ("Active".to_string(), StatusTone::Live)
+            ("50 Hz".to_string(), StatusTone::Live)
         );
-
         app.set_paused(true);
         assert_eq!(
             app.status_indicator(&Status::Live { rate_hz: 50.0 }, None, None),
-            ("Paused".to_string(), StatusTone::Muted)
+            ("Paused · 0 Hz".to_string(), StatusTone::Muted)
         );
     }
 
     #[test]
-    fn visibility_labels_follow_opacity() {
+    fn reset_defaults_preserves_show_advanced_info() {
+        let mut app = app_with(Config {
+            show_advanced_info: true,
+            gain: 2.5,
+            ..Default::default()
+        });
+        app.reset_defaults();
+        assert!(app.config.show_advanced_info);
+        assert!((app.config.gain - Config::default().gain).abs() < 1e-6);
+    }
+
+    #[test]
+    fn friendly_labels_follow_slider_ranges() {
         assert_eq!(visibility_label(0.2), "Gentle");
         assert_eq!(visibility_label(0.5), "Light");
         assert_eq!(visibility_label(0.65), "Medium");
         assert_eq!(visibility_label(0.8), "Strong");
+
+        assert_eq!(strength_label(0.7), "Gentle");
+        assert_eq!(strength_label(1.0), "Balanced");
+        assert_eq!(strength_label(1.6), "Strong");
+        assert_eq!(strength_label(2.5), "Max");
     }
 
     #[test]
     fn presets_are_distinct() {
         let mut seen: Vec<(u32, u32, u32)> = Vec::new();
-        for (name, gain, opacity, density) in PRESETS {
+        for (name, _, gain, opacity, density) in PRESETS {
             let key = (
                 (gain * 1000.0) as u32,
                 (opacity * 1000.0) as u32,

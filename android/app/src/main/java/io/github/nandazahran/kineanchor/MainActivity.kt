@@ -17,14 +17,12 @@ import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.util.TypedValue
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -48,11 +46,10 @@ import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
     private enum class Screen {
-        SIMPLE,
-        ADVANCED,
+        MAIN,
         PAIR,
         PERMISSION,
-        ABOUT,
+        SETTINGS,
     }
 
     private enum class AppMode {
@@ -61,23 +58,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private data class ComfortPreset(
-        val label: String,
+        val friendlyLabel: String,
+        val literalLabel: String,
         val gain: Float,
         val opacity: Float,
         val density: Float,
     )
 
     private val presets = listOf(
-        ComfortPreset("Gentle", 0.7f, 0.5f, 0.8f),
-        ComfortPreset("Balanced", 1.0f, 0.65f, 1.0f),
-        ComfortPreset("Winding", 1.6f, 0.7f, 1.3f),
+        ComfortPreset("Gentle", "0.7x Gentle", 0.7f, 0.5f, 0.8f),
+        ComfortPreset("Balanced", "1.0x Balanced", 1.0f, 0.65f, 1.0f),
+        ComfortPreset("Winding", "1.6x Winding", 1.6f, 0.7f, 1.3f),
     )
 
     private lateinit var palette: V2Palette
     private lateinit var rootFrame: FrameLayout
-    private var currentScreen = Screen.SIMPLE
+    private var currentScreen = Screen.MAIN
     private var appMode = AppMode.OVERLAY
+    private var settingsTab = 0 // 0 = Preferences, 1 = Privacy, 2 = Licenses
 
+    private var showAdvancedInfo = false
     private var selectedVehicle = 0 // 0 = Car, 1 = Ship
     private var selectedSource = 0 // 0 = Local IMU, 1 = Demo 0.20 Hz
     private var gain = 1.0f
@@ -89,8 +89,9 @@ class MainActivity : AppCompatActivity() {
     private var hasGyroSensor = true
 
     private var scopeView: HorizonScopeView? = null
-    private var simpleDynamicSlot: LinearLayout? = null
-    private var simpleStatusSlot: LinearLayout? = null
+    private var mainStatusSlot: LinearLayout? = null
+    private var mainDynamicSlot: LinearLayout? = null
+    private var mainPresetSlot: LinearLayout? = null
     private var pairDynamicSlot: LinearLayout? = null
     private var uriInput: EditText? = null
     private var previewView: PreviewView? = null
@@ -104,6 +105,7 @@ class MainActivity : AppCompatActivity() {
 
     private val uiHandler = Handler(Looper.getMainLooper())
     private var lastRenderedFingerprint = ""
+    private var lastPresetFingerprint = ""
     private val refreshTick = object : Runnable {
         override fun run() {
             syncLiveState()
@@ -144,8 +146,8 @@ class MainActivity : AppCompatActivity() {
             this,
             object : OnBackPressedCallback(true) {
                 override fun handleOnBackPressed() {
-                    if (currentScreen != Screen.SIMPLE) {
-                        navigateTo(Screen.SIMPLE)
+                    if (currentScreen != Screen.MAIN) {
+                        navigateTo(Screen.MAIN)
                     } else {
                         isEnabled = false
                         onBackPressedDispatcher.onBackPressed()
@@ -196,6 +198,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadConfig() {
         val p = prefs()
+        showAdvancedInfo = p.getBoolean("show_advanced_info", false)
         selectedVehicle = p.getInt("vehicle", 0)
         selectedSource = p.getInt("source", 0)
         density = p.getFloat("density", 1.0f)
@@ -206,6 +209,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveConfig() {
         prefs().edit()
+            .putBoolean("show_advanced_info", showAdvancedInfo)
             .putInt("vehicle", selectedVehicle)
             .putInt("source", selectedSource)
             .putFloat("density", density)
@@ -225,6 +229,16 @@ class MainActivity : AppCompatActivity() {
             }
             startService(intent)
         }
+    }
+
+    private fun resetDefaults() {
+        selectedVehicle = 0
+        selectedSource = 0
+        density = 1.0f
+        dotRadius = 10.0f
+        opacity = 0.65f
+        gain = 1.0f
+        saveConfig()
     }
 
     private fun probeSensors() {
@@ -252,11 +266,13 @@ class MainActivity : AppCompatActivity() {
     private fun renderScreen() {
         val p = palette
         rootFrame.removeAllViews()
-        simpleDynamicSlot = null
-        simpleStatusSlot = null
+        mainStatusSlot = null
+        mainDynamicSlot = null
+        mainPresetSlot = null
         pairDynamicSlot = null
         scopeView = null
         lastRenderedFingerprint = ""
+        lastPresetFingerprint = ""
 
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -267,39 +283,32 @@ class MainActivity : AppCompatActivity() {
         }
 
         val header = when (currentScreen) {
-            Screen.SIMPLE -> V2Widgets.topHeader(
+            Screen.MAIN -> V2Widgets.topHeader(
                 context = this,
                 p = p,
                 title = "KineAnchor",
                 leadingIcon = R.drawable.ic_lucide_compass,
                 trailingActions = listOf(
-                    R.drawable.ic_lucide_sliders_horizontal to ("Advanced" to { navigateTo(Screen.ADVANCED) }),
-                    R.drawable.ic_lucide_shield to ("About" to { navigateTo(Screen.ABOUT) }),
+                    R.drawable.ic_lucide_sliders_horizontal to ("Settings" to { navigateTo(Screen.SETTINGS) }),
                 ),
-            )
-            Screen.ADVANCED -> V2Widgets.topHeader(
-                context = this,
-                p = p,
-                title = "Advanced",
-                onBack = { navigateTo(Screen.SIMPLE) },
             )
             Screen.PAIR -> V2Widgets.topHeader(
                 context = this,
                 p = p,
                 title = "Pair laptop",
-                onBack = { navigateTo(Screen.SIMPLE) },
+                onBack = { navigateTo(Screen.MAIN) },
             )
             Screen.PERMISSION -> V2Widgets.topHeader(
                 context = this,
                 p = p,
                 title = "Overlay permission",
-                onBack = { navigateTo(Screen.SIMPLE) },
+                onBack = { navigateTo(Screen.MAIN) },
             )
-            Screen.ABOUT -> V2Widgets.topHeader(
+            Screen.SETTINGS -> V2Widgets.topHeader(
                 context = this,
                 p = p,
-                title = "About",
-                onBack = { navigateTo(Screen.SIMPLE) },
+                title = "Settings",
+                onBack = { navigateTo(Screen.MAIN) },
             )
         }
         container.addView(header)
@@ -315,11 +324,10 @@ class MainActivity : AppCompatActivity() {
             )
         }
         when (currentScreen) {
-            Screen.SIMPLE -> buildSimple(body, p)
-            Screen.ADVANCED -> buildAdvanced(body, p)
+            Screen.MAIN -> buildMain(body, p)
             Screen.PAIR -> buildPair(body, p)
             Screen.PERMISSION -> buildPermission(body, p)
-            Screen.ABOUT -> buildAbout(body, p)
+            Screen.SETTINGS -> buildSettings(body, p)
         }
 
         val scroll = ScrollView(this).apply {
@@ -335,7 +343,9 @@ class MainActivity : AppCompatActivity() {
         syncLiveState(forceRebuild = true)
     }
 
-    private fun buildSimple(body: LinearLayout, p: V2Palette) {
+    private fun buildMain(body: LinearLayout, p: V2Palette) {
+        val adv = showAdvancedInfo
+
         val scope = HorizonScopeView(this, p).apply {
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -346,11 +356,12 @@ class MainActivity : AppCompatActivity() {
         body.addView(scope)
         body.addView(V2Widgets.vSpace(this, 12f))
 
+        body.addView(V2Widgets.sectionCaption(this, p, if (adv) "Mode" else "Target"))
         body.addView(
             V2Widgets.segmented(
                 context = this,
                 p = p,
-                options = listOf("Overlay", "Stream to PC"),
+                options = if (adv) listOf("Local overlay", "TCP stream") else listOf("Phone screen", "Stream to PC"),
                 selected = if (appMode == AppMode.OVERLAY) 0 else 1,
                 onSelect = { idx ->
                     appMode = if (idx == 0) AppMode.OVERLAY else AppMode.STREAM
@@ -363,33 +374,165 @@ class MainActivity : AppCompatActivity() {
         val statusSlot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        simpleStatusSlot = statusSlot
+        mainStatusSlot = statusSlot
         body.addView(statusSlot)
 
         val dynamicSlot = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
         }
-        simpleDynamicSlot = dynamicSlot
+        mainDynamicSlot = dynamicSlot
         body.addView(dynamicSlot)
 
-        body.addView(V2Widgets.vSpace(this, 12f))
+        // Unified Motion & cues / Filter & cues section (present in both friendly and advanced modes)
+        body.addView(V2Widgets.vSpace(this, 14f))
         body.addView(
-            V2Widgets.navRow(
-                context = this,
-                p = p,
-                title = "Advanced",
-                subtitle = "Source, vehicle filter, cue geometry",
-                onClick = { navigateTo(Screen.ADVANCED) },
+            V2Widgets.sectionCaption(
+                this,
+                p,
+                if (adv) "Filter & cues · omega 6.0 · zeta 0.70" else "Motion & cues",
             ),
         )
-        body.addView(V2Widgets.vSpace(this, 8f))
-        body.addView(
-            V2Widgets.navRow(
+
+        val presetSlot = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        mainPresetSlot = presetSlot
+        body.addView(presetSlot)
+        rebuildPresetAndVehicleSlot(p)
+
+        body.addView(V2Widgets.vSpace(this, 10f))
+        val sliderCard = V2Widgets.cardColumn(this, p, padV = 6f)
+        sliderCard.addView(
+            V2Widgets.sliderRow(
                 context = this,
                 p = p,
-                title = "Privacy & licenses",
-                subtitle = "On-device telemetry, GPL-3.0-or-later",
-                onClick = { navigateTo(Screen.ABOUT) },
+                label = if (adv) "Gain" else "Strength",
+                minVal = 0.3f,
+                maxVal = 2.5f,
+                initial = gain,
+                formatValue = { if (adv) String.format("%.2fx", it) else strengthLabel(it) },
+                onValue = {
+                    gain = it
+                    saveConfig()
+                    refreshPresetSlotIfChanged()
+                },
+            ),
+        )
+        sliderCard.addView(V2Widgets.hairline(this, p))
+        sliderCard.addView(
+            V2Widgets.sliderRow(
+                context = this,
+                p = p,
+                label = if (adv) "Dot radius" else "Dot size",
+                minVal = 4.0f,
+                maxVal = 18.0f,
+                initial = dotRadius,
+                formatValue = { if (adv) String.format("%.0f dp", it) else sizeLabel(it) },
+                onValue = {
+                    dotRadius = it
+                    saveConfig()
+                },
+            ),
+        )
+        sliderCard.addView(V2Widgets.hairline(this, p))
+        sliderCard.addView(
+            V2Widgets.sliderRow(
+                context = this,
+                p = p,
+                label = if (adv) "Dot density" else "Dot amount",
+                minVal = 0.5f,
+                maxVal = 2.0f,
+                initial = density,
+                formatValue = { if (adv) String.format("%.2fx", it) else densityLabel(it) },
+                onValue = {
+                    density = it
+                    saveConfig()
+                    refreshPresetSlotIfChanged()
+                },
+            ),
+        )
+        sliderCard.addView(V2Widgets.hairline(this, p))
+        sliderCard.addView(
+            V2Widgets.sliderRow(
+                context = this,
+                p = p,
+                label = if (adv) "Opacity" else "Visibility",
+                minVal = 0.2f,
+                maxVal = 0.8f,
+                initial = opacity,
+                formatValue = {
+                    if (adv) String.format("%.0f%% (max 80%%)", it * 100f) else visibilityLabel(it)
+                },
+                onValue = {
+                    opacity = it.coerceAtMost(0.8f)
+                    saveConfig()
+                    refreshPresetSlotIfChanged()
+                },
+            ),
+        )
+        body.addView(sliderCard)
+        if (adv) {
+            body.addView(V2Widgets.vSpace(this, 8f))
+            body.addView(
+                V2Widgets.bodyText(
+                    context = this,
+                    p = p,
+                    text = "Opacity caps at 0.80 so Android keeps touches active beneath the overlay.",
+                    color = p.inkMuted,
+                    sizeSp = 12f,
+                ),
+            )
+        }
+    }
+
+    private fun refreshPresetSlotIfChanged() {
+        val fp = "${presetIndex()}|$selectedVehicle|$showAdvancedInfo"
+        if (fp != lastPresetFingerprint) {
+            lastPresetFingerprint = fp
+            rebuildPresetAndVehicleSlot(palette)
+        }
+    }
+
+    private fun rebuildPresetAndVehicleSlot(p: V2Palette) {
+        val slot = mainPresetSlot ?: return
+        val adv = showAdvancedInfo
+        lastPresetFingerprint = "${presetIndex()}|$selectedVehicle|$adv"
+        slot.removeAllViews()
+
+        slot.addView(V2Widgets.sectionCaption(this, p, if (adv) "Preset" else "Comfort"))
+        slot.addView(
+            V2Widgets.segmented(
+                context = this,
+                p = p,
+                options = presets.map { if (adv) it.literalLabel else it.friendlyLabel },
+                selected = presetIndex(),
+                onSelect = { idx ->
+                    val chosen = presets[idx]
+                    gain = chosen.gain
+                    opacity = chosen.opacity.coerceAtMost(0.8f)
+                    density = chosen.density
+                    saveConfig()
+                    renderScreen()
+                },
+            ),
+        )
+        slot.addView(V2Widgets.vSpace(this, 10f))
+        slot.addView(V2Widgets.sectionCaption(this, p, if (adv) "Filter mapping" else "Travel mode"))
+        slot.addView(
+            V2Widgets.segmented(
+                context = this,
+                p = p,
+                options = if (adv) {
+                    listOf("Force & tilt (Car)", "Full 6-DoF (0.1–0.3 Hz)")
+                } else {
+                    listOf("Car & bus", "Boat & ship")
+                },
+                selected = selectedVehicle,
+                onSelect = { idx ->
+                    selectedVehicle = idx
+                    saveConfig()
+                    rebuildPresetAndVehicleSlot(p)
+                },
             ),
         )
     }
@@ -401,24 +544,25 @@ class MainActivity : AppCompatActivity() {
         val usb = probeUsbState()
 
         scopeView?.let { sv ->
-            val (label, tone, synthetic, active) = resolveScopeStatus(overlay, stream, overlayPerm)
+            val st = resolveScopeStatus(overlay, stream, overlayPerm)
             sv.updateState(
-                label = label,
-                tone = tone,
+                label = st.label,
+                tone = st.tone,
                 horizonX = overlay.horizonX,
                 horizonY = overlay.horizonY,
-                synthetic = synthetic,
-                active = active,
+                synthetic = st.synthetic,
+                active = st.active,
+                customReadout = st.readout,
             )
         }
 
         val fingerprint = buildString {
             append(currentScreen).append('|')
             append(appMode).append('|')
+            append(showAdvancedInfo).append('|')
             append(overlay.running).append('|').append(overlay.paused).append('|')
             append(overlay.windowError).append('|')
             append(overlayPerm).append('|').append(selectedSource).append('|')
-            append(presetIndex()).append('|')
             append(stream).append('|')
             append(usb.first).append('|')
             append(scanErrorText).append('|').append(scannerActive).append('|').append(confirmForget)
@@ -427,8 +571,8 @@ class MainActivity : AppCompatActivity() {
         if (!forceRebuild && fingerprint == lastRenderedFingerprint) return
         lastRenderedFingerprint = fingerprint
 
-        if (currentScreen == Screen.SIMPLE) {
-            rebuildSimpleStatusAndControls(overlay, stream, overlayPerm, usb)
+        if (currentScreen == Screen.MAIN) {
+            rebuildMainStatusAndControls(overlay, stream, overlayPerm, usb)
         } else if (currentScreen == Screen.PAIR) {
             rebuildPairDynamic(stream)
         }
@@ -439,6 +583,7 @@ class MainActivity : AppCompatActivity() {
         val tone: HorizonScopeView.ScopeTone,
         val synthetic: Boolean,
         val active: Boolean,
+        val readout: String,
     )
 
     private fun resolveScopeStatus(
@@ -446,61 +591,167 @@ class MainActivity : AppCompatActivity() {
         stream: StreamService.StreamState,
         overlayPerm: Boolean,
     ): ScopeStatus {
+        val adv = showAdvancedInfo
         if (!NativeEngine.available) {
-            return ScopeStatus("Engine error", HorizonScopeView.ScopeTone.ERR, false, false)
+            return ScopeStatus(
+                if (adv) "Engine error · JNI" else "Engine error",
+                HorizonScopeView.ScopeTone.ERR,
+                false,
+                false,
+                if (adv) "0.00 / 0.00" else "Error",
+            )
         }
         return if (appMode == AppMode.OVERLAY) {
             when {
                 selectedSource == 0 && (!hasAccelSensor || !hasGyroSensor) ->
-                    ScopeStatus("Missing sensors", HorizonScopeView.ScopeTone.ERR, false, false)
+                    ScopeStatus(
+                        "Missing sensors",
+                        HorizonScopeView.ScopeTone.ERR,
+                        false,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Unavailable",
+                    )
                 overlay.windowError != null ->
-                    ScopeStatus("Overlay blocked", HorizonScopeView.ScopeTone.ERR, false, false)
+                    ScopeStatus(
+                        "Overlay blocked",
+                        HorizonScopeView.ScopeTone.ERR,
+                        false,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Blocked",
+                    )
                 !overlayPerm ->
-                    ScopeStatus("Permission needed", HorizonScopeView.ScopeTone.WARN, false, false)
+                    ScopeStatus(
+                        "Permission needed",
+                        HorizonScopeView.ScopeTone.WARN,
+                        false,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Setup",
+                    )
                 overlay.running && overlay.paused ->
-                    ScopeStatus("Paused", HorizonScopeView.ScopeTone.MUTED, selectedSource == 1, false)
+                    ScopeStatus(
+                        if (adv) "Paused · 0 Hz" else "Paused",
+                        HorizonScopeView.ScopeTone.MUTED,
+                        selectedSource == 1,
+                        false,
+                        if (adv) "0.00 / 0.00 · Paused" else "Static",
+                    )
                 overlay.running && selectedSource == 1 ->
-                    ScopeStatus("Demo · 0.20 Hz", HorizonScopeView.ScopeTone.WARN, true, true)
+                    ScopeStatus(
+                        if (adv) "Demo · 0.20 Hz" else "Demo wave",
+                        HorizonScopeView.ScopeTone.WARN,
+                        true,
+                        true,
+                        if (adv) {
+                            String.format("%+.2f / %+.2f · 60 Hz", overlay.horizonX, overlay.horizonY)
+                        } else {
+                            "Preview"
+                        },
+                    )
                 overlay.running ->
-                    ScopeStatus("Active · 50 Hz", HorizonScopeView.ScopeTone.LIVE, false, true)
+                    ScopeStatus(
+                        if (adv) "Active · 50 Hz" else "Active",
+                        HorizonScopeView.ScopeTone.LIVE,
+                        false,
+                        true,
+                        if (adv) {
+                            String.format("%+.2f / %+.2f · 50 Hz", overlay.horizonX, overlay.horizonY)
+                        } else {
+                            "Steady"
+                        },
+                    )
                 selectedSource == 1 ->
-                    ScopeStatus("Demo ready", HorizonScopeView.ScopeTone.WARN, true, false)
+                    ScopeStatus(
+                        if (adv) "Demo ready · 0.20 Hz" else "Demo ready",
+                        HorizonScopeView.ScopeTone.WARN,
+                        true,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Idle",
+                    )
                 else ->
-                    ScopeStatus("Idle", HorizonScopeView.ScopeTone.MUTED, false, false)
+                    ScopeStatus(
+                        if (adv) "Idle · 0 Hz" else "Idle",
+                        HorizonScopeView.ScopeTone.MUTED,
+                        false,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Idle",
+                    )
             }
         } else {
             when (stream) {
                 is StreamService.StreamState.Streaming ->
-                    ScopeStatus("Streaming · 50 Hz", HorizonScopeView.ScopeTone.LIVE, false, true)
+                    ScopeStatus(
+                        if (adv) "Streaming · 50 Hz" else "Streaming",
+                        HorizonScopeView.ScopeTone.LIVE,
+                        false,
+                        true,
+                        if (adv) "50 Hz · NDJSON" else "Live",
+                    )
                 is StreamService.StreamState.Listening ->
-                    ScopeStatus("Listening · ${stream.port}", HorizonScopeView.ScopeTone.WARN, false, false)
+                    ScopeStatus(
+                        if (adv) "Listening · :${stream.port}" else "Waiting for PC",
+                        HorizonScopeView.ScopeTone.WARN,
+                        false,
+                        false,
+                        if (adv) "TCP :${stream.port}" else "Listening",
+                    )
                 is StreamService.StreamState.Connecting ->
-                    ScopeStatus("Connecting", HorizonScopeView.ScopeTone.WARN, false, false)
+                    ScopeStatus(
+                        "Connecting",
+                        HorizonScopeView.ScopeTone.WARN,
+                        false,
+                        false,
+                        if (adv) "${stream.host}:${stream.port}" else "Dialing",
+                    )
                 is StreamService.StreamState.Rejected ->
-                    ScopeStatus("Rejected", HorizonScopeView.ScopeTone.ERR, false, false)
+                    ScopeStatus(
+                        if (adv) "Rejected" else "Pairing rejected",
+                        HorizonScopeView.ScopeTone.ERR,
+                        false,
+                        false,
+                        if (adv) "bad_token" else "Error",
+                    )
                 is StreamService.StreamState.BindError ->
-                    ScopeStatus("Port busy", HorizonScopeView.ScopeTone.ERR, false, false)
+                    ScopeStatus(
+                        "Port busy",
+                        HorizonScopeView.ScopeTone.ERR,
+                        false,
+                        false,
+                        if (adv) "TCP :${Protocol.DEFAULT_PORT}" else "Blocked",
+                    )
                 is StreamService.StreamState.Disconnected ->
-                    ScopeStatus("Disconnected", HorizonScopeView.ScopeTone.WARN, false, false)
+                    ScopeStatus(
+                        "Disconnected",
+                        HorizonScopeView.ScopeTone.WARN,
+                        false,
+                        false,
+                        if (adv) "Socket closed" else "Offline",
+                    )
                 StreamService.StreamState.Idle ->
-                    ScopeStatus("Idle", HorizonScopeView.ScopeTone.MUTED, false, false)
+                    ScopeStatus(
+                        if (adv) "Idle · 0 Hz" else "Idle",
+                        HorizonScopeView.ScopeTone.MUTED,
+                        false,
+                        false,
+                        if (adv) "0.00 / 0.00" else "Idle",
+                    )
             }
         }
     }
 
-    private fun rebuildSimpleStatusAndControls(
+    private fun rebuildMainStatusAndControls(
         overlay: OverlayService.StateSnapshot,
         stream: StreamService.StreamState,
         overlayPerm: Boolean,
         usb: Pair<String, Boolean>,
     ) {
         val p = palette
-        val statusSlot = simpleStatusSlot ?: return
-        val dynSlot = simpleDynamicSlot ?: return
+        val adv = showAdvancedInfo
+        val statusSlot = mainStatusSlot ?: return
+        val dynSlot = mainDynamicSlot ?: return
         statusSlot.removeAllViews()
         dynSlot.removeAllViews()
 
-        // Priority system banners: native failure > missing sensor > overlay window error > permission / network.
+        // Priority system banners
         if (!NativeEngine.available) {
             statusSlot.addView(
                 V2Widgets.noticeBox(
@@ -570,9 +821,13 @@ class MainActivity : AppCompatActivity() {
                         context = this,
                         p = p,
                         tone = V2Widgets.NoticeTone.WARN,
-                        title = "Demo motion active",
-                        body = "Cues follow a synthetic 0.20 Hz wave instead of device sensors. Switch to Local IMU before travel.",
-                        actionLabel = "Switch to IMU",
+                        title = if (adv) "Synthetic wave active (0.20 Hz)" else "Demo motion active",
+                        body = if (adv) {
+                            "Cues follow a synthetic 0.20 Hz wave instead of device sensors. Switch to Local IMU before travel."
+                        } else {
+                            "Cues show a sample wave instead of phone sensors. Switch back to Phone sensors before travel."
+                        },
+                        actionLabel = if (adv) "Switch to IMU" else "Use sensors",
                         onAction = {
                             selectedSource = 0
                             saveConfig()
@@ -582,26 +837,6 @@ class MainActivity : AppCompatActivity() {
                 )
                 statusSlot.addView(V2Widgets.vSpace(this, 10f))
             }
-
-            // Comfort preset selector
-            dynSlot.addView(V2Widgets.sectionCaption(this, p, "Comfort"))
-            dynSlot.addView(
-                V2Widgets.segmented(
-                    context = this,
-                    p = p,
-                    options = presets.map { it.label },
-                    selected = presetIndex(),
-                    onSelect = { idx ->
-                        val chosen = presets[idx]
-                        gain = chosen.gain
-                        opacity = chosen.opacity.coerceAtMost(0.8f)
-                        density = chosen.density
-                        saveConfig()
-                        syncLiveState(forceRebuild = true)
-                    },
-                ),
-            )
-            dynSlot.addView(V2Widgets.vSpace(this, 12f))
 
             // Primary action row
             val canStart = NativeEngine.available && overlayPerm &&
@@ -614,7 +849,7 @@ class MainActivity : AppCompatActivity() {
                 val startBtn = V2Widgets.actionButton(
                     context = this,
                     p = p,
-                    label = "Start overlay",
+                    label = if (adv) "Start overlay" else "Start cues",
                     kind = V2Widgets.ButtonKind.PRIMARY,
                     iconRes = R.drawable.ic_lucide_play,
                     enabled = canStart,
@@ -640,7 +875,7 @@ class MainActivity : AppCompatActivity() {
                 val zeroBtn = V2Widgets.actionButton(
                     context = this,
                     p = p,
-                    label = "Zero",
+                    label = if (adv) "Zero" else "Center",
                     kind = V2Widgets.ButtonKind.SECONDARY,
                     iconRes = R.drawable.ic_lucide_crosshair,
                     onClick = {
@@ -663,6 +898,29 @@ class MainActivity : AppCompatActivity() {
                 btnRow.addView(stopBtn)
             }
             dynSlot.addView(btnRow)
+            dynSlot.addView(V2Widgets.vSpace(this, 14f))
+
+            // Motion source selector (unified on main screen)
+            dynSlot.addView(
+                V2Widgets.sectionCaption(
+                    this,
+                    p,
+                    if (adv) "Sensor source · 50 Hz" else "Motion source",
+                ),
+            )
+            dynSlot.addView(
+                V2Widgets.segmented(
+                    context = this,
+                    p = p,
+                    options = if (adv) listOf("Local IMU", "Synthetic 0.20 Hz") else listOf("Phone sensors", "Demo wave"),
+                    selected = selectedSource,
+                    onSelect = { idx ->
+                        selectedSource = idx
+                        saveConfig()
+                        renderScreen()
+                    },
+                ),
+            )
         } else {
             // Stream to PC mode
             when (stream) {
@@ -726,22 +984,6 @@ class MainActivity : AppCompatActivity() {
                 statusSlot.addView(V2Widgets.vSpace(this, 10f))
             }
 
-            val card = V2Widgets.cardColumn(this, p, padV = 4f)
-            val pairedName = prefs().getString("paired_desktop", null) ?: "Not paired"
-            val streamText = when (stream) {
-                is StreamService.StreamState.Streaming -> "Streaming to ${stream.peerName ?: stream.endpoint}"
-                is StreamService.StreamState.Listening -> "Listening on :${stream.port}"
-                is StreamService.StreamState.Connecting -> "Connecting to ${stream.host}:${stream.port}"
-                else -> "Stopped"
-            }
-            card.addView(V2Widgets.infoRow(this, p, "Link", streamText))
-            card.addView(V2Widgets.hairline(this, p))
-            card.addView(V2Widgets.infoRow(this, p, "USB tether", usb.first))
-            card.addView(V2Widgets.hairline(this, p))
-            card.addView(V2Widgets.infoRow(this, p, "Desktop", pairedName))
-            dynSlot.addView(card)
-            dynSlot.addView(V2Widgets.vSpace(this, 12f))
-
             val streamActive = stream is StreamService.StreamState.Streaming ||
                 stream is StreamService.StreamState.Listening ||
                 stream is StreamService.StreamState.Connecting
@@ -788,7 +1030,7 @@ class MainActivity : AppCompatActivity() {
             val pairBtn = V2Widgets.actionButton(
                 context = this,
                 p = p,
-                label = "Pair laptop",
+                label = if (adv) "Pair QR / URI" else "Pair laptop",
                 kind = V2Widgets.ButtonKind.SECONDARY,
                 iconRes = R.drawable.ic_lucide_qr_code,
                 onClick = { navigateTo(Screen.PAIR) },
@@ -797,130 +1039,31 @@ class MainActivity : AppCompatActivity() {
             btnRow.addView(V2Widgets.hSpace(this, 8f))
             btnRow.addView(pairBtn)
             dynSlot.addView(btnRow)
-        }
-    }
+            dynSlot.addView(V2Widgets.vSpace(this, 14f))
 
-    private fun buildAdvanced(body: LinearLayout, p: V2Palette) {
-        body.addView(V2Widgets.sectionCaption(this, p, "Motion source"))
-        body.addView(
-            V2Widgets.segmented(
-                context = this,
-                p = p,
-                options = listOf("Local IMU", "Demo 0.20 Hz"),
-                selected = selectedSource,
-                onSelect = { idx ->
-                    selectedSource = idx
-                    saveConfig()
-                    renderScreen()
-                },
-            ),
-        )
-        if (selectedSource == 1) {
-            body.addView(V2Widgets.vSpace(this, 10f))
-            body.addView(
-                V2Widgets.noticeBox(
-                    context = this,
-                    p = p,
-                    tone = V2Widgets.NoticeTone.WARN,
-                    title = "Synthetic wave enabled",
-                    body = "Overlay ignores live vehicle motion while Demo is selected.",
+            dynSlot.addView(
+                V2Widgets.sectionCaption(
+                    this,
+                    p,
+                    if (adv) "Transport · TCP :${Protocol.DEFAULT_PORT}" else "Laptop connection",
                 ),
             )
+            val card = V2Widgets.cardColumn(this, p, padV = 4f)
+            val pairedName = prefs().getString("paired_desktop", null) ?: "Not paired"
+            val streamText = when (stream) {
+                is StreamService.StreamState.Streaming -> "Streaming to ${stream.peerName ?: stream.endpoint}"
+                is StreamService.StreamState.Listening -> "Listening on :${stream.port}"
+                is StreamService.StreamState.Connecting -> "Connecting to ${stream.host}:${stream.port}"
+                else -> "Stopped"
+            }
+            card.addView(V2Widgets.infoRow(this, p, if (adv) "Link" else "Status", streamText, monoValue = adv))
+            card.addView(V2Widgets.hairline(this, p))
+            val usbVal = if (adv && usb.second) "${usb.first} · RNDIS" else usb.first
+            card.addView(V2Widgets.infoRow(this, p, "USB tether", usbVal, monoValue = adv))
+            card.addView(V2Widgets.hairline(this, p))
+            card.addView(V2Widgets.infoRow(this, p, "Desktop", pairedName, monoValue = adv))
+            dynSlot.addView(card)
         }
-
-        body.addView(V2Widgets.vSpace(this, 14f))
-        body.addView(V2Widgets.sectionCaption(this, p, "Vehicle filter"))
-        body.addView(
-            V2Widgets.segmented(
-                context = this,
-                p = p,
-                options = listOf("Car", "Ship (0.1–0.3 Hz)"),
-                selected = selectedVehicle,
-                onSelect = { idx ->
-                    selectedVehicle = idx
-                    saveConfig()
-                    renderScreen()
-                },
-            ),
-        )
-
-        body.addView(V2Widgets.vSpace(this, 14f))
-        body.addView(V2Widgets.sectionCaption(this, p, "Cue geometry"))
-        val card = V2Widgets.cardColumn(this, p, padV = 6f)
-        card.addView(
-            V2Widgets.sliderRow(
-                context = this,
-                p = p,
-                label = "Gain",
-                minVal = 0.3f,
-                maxVal = 2.5f,
-                initial = gain,
-                formatValue = { String.format("%.2fx", it) },
-                onValue = {
-                    gain = it
-                    saveConfig()
-                },
-            ),
-        )
-        card.addView(V2Widgets.hairline(this, p))
-        card.addView(
-            V2Widgets.sliderRow(
-                context = this,
-                p = p,
-                label = "Dot radius",
-                minVal = 4.0f,
-                maxVal = 18.0f,
-                initial = dotRadius,
-                formatValue = { String.format("%.0f dp", it) },
-                onValue = {
-                    dotRadius = it
-                    saveConfig()
-                },
-            ),
-        )
-        card.addView(V2Widgets.hairline(this, p))
-        card.addView(
-            V2Widgets.sliderRow(
-                context = this,
-                p = p,
-                label = "Dot density",
-                minVal = 0.5f,
-                maxVal = 2.0f,
-                initial = density,
-                formatValue = { String.format("%.2fx", it) },
-                onValue = {
-                    density = it
-                    saveConfig()
-                },
-            ),
-        )
-        card.addView(V2Widgets.hairline(this, p))
-        card.addView(
-            V2Widgets.sliderRow(
-                context = this,
-                p = p,
-                label = "Opacity",
-                minVal = 0.2f,
-                maxVal = 0.8f,
-                initial = opacity,
-                formatValue = { String.format("%.2f", it) },
-                onValue = {
-                    opacity = it.coerceAtMost(0.8f)
-                    saveConfig()
-                },
-            ),
-        )
-        body.addView(card)
-        body.addView(V2Widgets.vSpace(this, 8f))
-        body.addView(
-            V2Widgets.bodyText(
-                context = this,
-                p = p,
-                text = "Opacity caps at 0.80 so Android keeps touches active beneath the overlay.",
-                color = p.inkMuted,
-                sizeSp = 12f,
-            ),
-        )
     }
 
     private fun buildPair(body: LinearLayout, p: V2Palette) {
@@ -988,7 +1131,7 @@ class MainActivity : AppCompatActivity() {
                     scanErrorText = null
                     appMode = AppMode.STREAM
                     startStream(null, Protocol.DEFAULT_PORT, null)
-                    navigateTo(Screen.SIMPLE)
+                    navigateTo(Screen.MAIN)
                     return@actionButton
                 }
                 if (!raw.startsWith("motion://")) {
@@ -1006,7 +1149,7 @@ class MainActivity : AppCompatActivity() {
                 prefs().edit().putString("last_uri", raw).apply()
                 appMode = AppMode.STREAM
                 startStream(parsed.host, parsed.port, parsed.pairSecret)
-                navigateTo(Screen.SIMPLE)
+                navigateTo(Screen.MAIN)
             },
         ).apply {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
@@ -1021,7 +1164,7 @@ class MainActivity : AppCompatActivity() {
                 scanErrorText = null
                 appMode = AppMode.STREAM
                 startStream(null, Protocol.DEFAULT_PORT, null)
-                navigateTo(Screen.SIMPLE)
+                navigateTo(Screen.MAIN)
             },
         )
         actionRow.addView(connectBtn)
@@ -1181,16 +1324,183 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun buildAbout(body: LinearLayout, p: V2Palette) {
+    private fun buildSettings(body: LinearLayout, p: V2Palette) {
+        body.addView(
+            V2Widgets.segmented(
+                context = this,
+                p = p,
+                options = listOf("Preferences", "Privacy", "Licenses"),
+                selected = settingsTab,
+                onSelect = { idx ->
+                    settingsTab = idx
+                    confirmForget = false
+                    renderScreen()
+                },
+            ),
+        )
+        body.addView(V2Widgets.vSpace(this, 14f))
+
+        when (settingsTab) {
+            0 -> buildPreferencesTab(body, p)
+            1 -> buildPrivacyTab(body, p)
+            else -> buildLicensesTab(body, p)
+        }
+    }
+
+    private fun buildPreferencesTab(body: LinearLayout, p: V2Palette) {
+        body.addView(V2Widgets.sectionCaption(this, p, "Interface"))
+        val uiCard = V2Widgets.cardColumn(this, p)
+        uiCard.addView(
+            V2Widgets.bodyText(
+                context = this,
+                p = p,
+                text = "Show advanced info",
+                color = p.ink,
+                sizeSp = 14f,
+            ),
+        )
+        uiCard.addView(V2Widgets.vSpace(this, 4f))
+        uiCard.addView(
+            V2Widgets.bodyText(
+                context = this,
+                p = p,
+                text = "Use literal technical names (Gain, Opacity, 6-DoF) and show raw Hz, offset, and transport telemetry.",
+                color = p.inkSecondary,
+                sizeSp = 12.5f,
+            ),
+        )
+        uiCard.addView(V2Widgets.vSpace(this, 10f))
+        uiCard.addView(
+            V2Widgets.segmented(
+                context = this,
+                p = p,
+                options = listOf("Off", "On"),
+                selected = if (showAdvancedInfo) 1 else 0,
+                onSelect = { idx ->
+                    val next = idx == 1
+                    if (next != showAdvancedInfo) {
+                        showAdvancedInfo = next
+                        saveConfig()
+                        renderScreen()
+                    }
+                },
+            ),
+        )
+        body.addView(uiCard)
+
+        body.addView(V2Widgets.vSpace(this, 14f))
+        body.addView(V2Widgets.sectionCaption(this, p, "Calibration & filter"))
+        val calCard = V2Widgets.cardColumn(this, p)
+        calCard.addView(
+            V2Widgets.bodyText(
+                context = this,
+                p = p,
+                text = if (showAdvancedInfo) {
+                    "Spring ODE: omega 6.0 rad/s, zeta 0.70, tau 0.50 s · 500 ms watchdog"
+                } else {
+                    "Motion smoothing damps jerky bumps and returns cues gently to rest."
+                },
+                color = p.inkSecondary,
+                sizeSp = 12.5f,
+            ),
+        )
+        calCard.addView(V2Widgets.vSpace(this, 10f))
+        calCard.addView(
+            V2Widgets.actionButton(
+                context = this,
+                p = p,
+                label = "Reset defaults",
+                kind = V2Widgets.ButtonKind.SECONDARY,
+                onClick = {
+                    resetDefaults()
+                    renderScreen()
+                },
+            ),
+        )
+        body.addView(calCard)
+
+        body.addView(V2Widgets.vSpace(this, 14f))
+        body.addView(V2Widgets.sectionCaption(this, p, "Paired desktop"))
+        val pairCard = V2Widgets.cardColumn(this, p, padV = 6f)
+        val pairedName = prefs().getString("paired_desktop", null)
+        val hasToken = prefs().getString("paired_token", null) != null
+        pairCard.addView(V2Widgets.infoRow(this, p, "Desktop", pairedName ?: "None"))
+        if (hasToken || pairedName != null) {
+            pairCard.addView(V2Widgets.hairline(this, p))
+            val btnRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(0, UiKit.dp(context, 8f), 0, UiKit.dp(context, 4f))
+            }
+            if (!confirmForget) {
+                btnRow.addView(
+                    V2Widgets.actionButton(
+                        context = this,
+                        p = p,
+                        label = "Revoke token",
+                        kind = V2Widgets.ButtonKind.DANGER,
+                        onClick = {
+                            confirmForget = true
+                            renderScreen()
+                        },
+                    ),
+                )
+            } else {
+                btnRow.addView(
+                    V2Widgets.actionButton(
+                        context = this,
+                        p = p,
+                        label = "Confirm revoke",
+                        kind = V2Widgets.ButtonKind.DANGER,
+                        onClick = {
+                            prefs().edit()
+                                .remove("paired_token")
+                                .remove("paired_desktop")
+                                .apply()
+                            confirmForget = false
+                            renderScreen()
+                        },
+                    ),
+                )
+                btnRow.addView(V2Widgets.hSpace(this, 8f))
+                btnRow.addView(
+                    V2Widgets.actionButton(
+                        context = this,
+                        p = p,
+                        label = "Cancel",
+                        kind = V2Widgets.ButtonKind.SECONDARY,
+                        onClick = {
+                            confirmForget = false
+                            renderScreen()
+                        },
+                    ),
+                )
+            }
+            pairCard.addView(btnRow)
+        }
+        body.addView(pairCard)
+    }
+
+    private fun buildPrivacyTab(body: LinearLayout, p: V2Palette) {
         body.addView(V2Widgets.sectionCaption(this, p, "Application"))
         val appCard = V2Widgets.cardColumn(this, p, padV = 4f)
         appCard.addView(V2Widgets.infoRow(this, p, "Version", "0.1.1", monoValue = true))
         appCard.addView(V2Widgets.hairline(this, p))
         appCard.addView(V2Widgets.infoRow(this, p, "License", "GPL-3.0-or-later"))
+        appCard.addView(V2Widgets.hairline(this, p))
+        val granted = Settings.canDrawOverlays(this)
+        appCard.addView(
+            V2Widgets.infoRow(
+                this,
+                p,
+                "Display over apps",
+                if (granted) "Granted" else "Required",
+                valueColor = if (granted) p.live else p.warn,
+            ),
+        )
         body.addView(appCard)
 
         body.addView(V2Widgets.vSpace(this, 14f))
-        body.addView(V2Widgets.sectionCaption(this, p, "Privacy"))
+        body.addView(V2Widgets.sectionCaption(this, p, "Zero telemetry · Offline"))
         val privacyCard = V2Widgets.cardColumn(this, p)
         privacyCard.addView(
             V2Widgets.bodyText(
@@ -1202,6 +1512,21 @@ class MainActivity : AppCompatActivity() {
             ),
         )
         body.addView(privacyCard)
+    }
+
+    private fun buildLicensesTab(body: LinearLayout, p: V2Palette) {
+        body.addView(V2Widgets.sectionCaption(this, p, "GNU GPL v3.0 or later"))
+        val licenseCard = V2Widgets.cardColumn(this, p)
+        licenseCard.addView(
+            V2Widgets.bodyText(
+                context = this,
+                p = p,
+                text = "Kotlin shell + Rust core via zero-dep C-ABI JNI (libkineanchor_android_ffi.so).",
+                color = p.inkSecondary,
+                sizeSp = 12.5f,
+            ),
+        )
+        body.addView(licenseCard)
 
         body.addView(V2Widgets.vSpace(this, 14f))
         body.addView(V2Widgets.sectionCaption(this, p, "Open-source dependencies"))
@@ -1217,7 +1542,45 @@ class MainActivity : AppCompatActivity() {
             depCard.addView(V2Widgets.infoRow(this, p, name, lic, monoValue = true, valueColor = p.inkSecondary))
         }
         body.addView(depCard)
+
+        body.addView(V2Widgets.vSpace(this, 14f))
+        body.addView(V2Widgets.sectionCaption(this, p, "Research & prior art"))
+        val researchCard = V2Widgets.cardColumn(this, p, padV = 4f)
+        researchCard.addView(V2Widgets.infoRow(this, p, "Diels & Howarth (2013)", "Human Factors"))
+        researchCard.addView(V2Widgets.hairline(this, p))
+        researchCard.addView(V2Widgets.infoRow(this, p, "Clean-room prior art", "0 lines copied"))
+        body.addView(researchCard)
     }
+
+    private fun strengthLabel(v: Float): String =
+        when {
+            v < 0.85f -> "Gentle"
+            v < 1.3f -> "Balanced"
+            v < 2.0f -> "Strong"
+            else -> "Max"
+        }
+
+    private fun sizeLabel(dp: Float): String =
+        when {
+            dp < 8.0f -> "Small"
+            dp < 13.0f -> "Medium"
+            else -> "Large"
+        }
+
+    private fun densityLabel(d: Float): String =
+        when {
+            d < 0.85f -> "Few"
+            d < 1.35f -> "Normal"
+            else -> "Many"
+        }
+
+    private fun visibilityLabel(alpha: Float): String =
+        when {
+            alpha < 0.35f -> "Gentle"
+            alpha < 0.55f -> "Light"
+            alpha < 0.72f -> "Medium"
+            else -> "Strong"
+        }
 
     private fun startOverlayService() {
         val intent = Intent(this, OverlayService::class.java).apply {
@@ -1372,7 +1735,7 @@ class MainActivity : AppCompatActivity() {
                 stopQrScan()
                 appMode = AppMode.STREAM
                 startStream(parsed.host, parsed.port, parsed.pairSecret)
-                navigateTo(Screen.SIMPLE)
+                navigateTo(Screen.MAIN)
             }
         } finally {
             image.close()
