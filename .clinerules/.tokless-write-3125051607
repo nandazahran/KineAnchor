@@ -1,0 +1,22 @@
+### Intent & Notes
+
+#### Project purpose
+Cross-platform FOSS (GPL-3.0-or-later) motion-sickness overlay app for Linux (Wayland `wlr-layer-shell` + X11), Windows, and Android.
+
+#### Plan
+_What we're working toward now. Use `- [ ]` / `- [x]` checklists._
+
+Full plan: `docs/ROADMAP.md`, `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`.
+
+- [x] P0 scaffold: workspace (core, desktop bin, android-ffi), Cargo.lock tracked, SPDX, deny.toml, CI
+- [x] P1 Linux layer-shell overlay + synthetic mode (spike `wayapp` vs custom SCTK glue first)
+- [x] P2 phone stream over USB tether (NDJSON v1, QR pairing, watchdog fallback, fake_phone example)
+- [x] P3 Windows overlay (cross-platform cfg gating, winit click-through overlay, WiX MSI + winget manifests)
+- [x] P4 Android overlay + F-Droid (zero-dep C-ABI JNI bridge, OverlayService with alpha <= 0.8, Fastlane + F-Droid recipe)
+- [x] P5 polish (ship 0.1-0.3Hz wave band test, PCA forward-axis auto-detection, IioProvider, ControllerProvider, GNOME Shell extension)
+
+#### Notes
+- Initial commit
+- gotcha: dev laptop (CachyOS, Plasma 6.8.1 Wayland) has no IIO sensors and runs ufw, not firewalld; Android overlays must keep window alpha <= 0.8 or Android 12+ blocks touches underneath.
+- gotcha: smithay-client-toolkit and wayland-client must be gated under [target.'cfg(target_os = "linux")'.dependencies] so windows-latest CI builds crates/kineanchor cleanly [crates/kineanchor/Cargo.toml:10]
+- gotcha: a release only happens when a v* tag is pushed; bumping the version and committing is not enough. release.yml publish job now fails fast if the tag disagrees with Cargo.toml [workspace.package] version. [.github/workflows/release.yml:134]
