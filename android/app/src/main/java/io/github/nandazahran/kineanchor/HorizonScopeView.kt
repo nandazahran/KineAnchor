@@ -60,6 +60,7 @@ class HorizonScopeView(
         horizonY: Float,
         synthetic: Boolean,
         active: Boolean,
+        customReadout: String? = null,
     ) {
         statusText = label
         statusTone = tone
@@ -67,7 +68,7 @@ class HorizonScopeView(
         offsetY = horizonY.coerceIn(-1f, 1f)
         syntheticMode = synthetic
         activeMotion = active
-        readoutText = String.format("%+.2f / %+.2f", offsetX, offsetY)
+        readoutText = customReadout ?: String.format("%+.2f / %+.2f", offsetX, offsetY)
         invalidate()
     }
 
